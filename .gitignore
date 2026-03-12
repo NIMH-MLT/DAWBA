@@ -1,0 +1,14 @@
+# Data
+data/
+
+# Toy notebooks
+notebooks/0_exploration.ipynb
+notebooks/0_cv_splits.ipynb
+notebooks/0_tune_en_reduced.ipynb
+
+# Results
+initial_results/
+
+## Extras
+src/__pycache__
+logs/
