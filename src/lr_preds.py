@@ -1,20 +1,60 @@
-import argparse
 from .config import SEED
-from .utils import ALPHA_LIST, L1_LIST
-from .split import add_split_col
+from .utils import L1_LIST
 from .lr import get_lr_output
+
 import pandas as pd
 from joblib import Parallel, delayed
 from pathlib import Path
+import argparse
+from sklearn.model_selection import StratifiedKFold
+import numpy as np
+
+
+def add_split_col(df, pred_type, n_splits=4, tol=0.1, random_state=SEED, verbose=0):
+    if verbose != 0:
+        print(f"Pred type: {pred_type}")
+    y = df["eligible_group"]
+    skf = StratifiedKFold(n_splits=n_splits, random_state=random_state, shuffle=True)
+    folds_positional = [tst for trn, tst in skf.split(np.zeros(len(y)), y)]
+    ## Make col with split ID
+    split_col_name = "split_id"
+    df[split_col_name] = -1
+    for split_id, split_indices in enumerate(folds_positional):
+        df.loc[split_indices, split_col_name] = split_id
+    ## Ensure splits look good + explore outcome var
+    check_ratios(df, pred_type, tol, verbose)
+    return df
+
+
+def check_ratios(df_w_splits, pred_type, tol=0.1, verbose=0):
+    ratio_list_dict = {k: [] for k in df_w_splits["eligible_group"].unique()}
+    ## Populate dict of lists w/ normalized ratio of eligible group
+    for split in range(4):
+        sub_df = df_w_splits[df_w_splits["split_id"] == split]
+        if verbose != 0:
+            print(
+                f"\tSplit {split+1} avg score: {np.mean(sub_df[f'Impact_Score_{pred_type}'])}"
+            )
+        val_counts = sub_df["eligible_group"].value_counts(normalize=True)
+        for group in ratio_list_dict.keys():
+            ratio_list_dict[group].append(val_counts[group])
+    ## Check ratios are ~=
+    for group, group_list in ratio_list_dict.items():
+        diff = max(group_list) - min(group_list)
+        assert (
+            diff <= tol
+        ), f"Potential error in splitting, group: {group} contains a difference of {diff}"
+    if verbose != 0:
+        print(f"\tSplits are all good!")
 
 
 def loop_through_l1(
     *_,
     impact_type,
+    agg_type,
     alpha_val,
     df_path,
     base_save_dir,
-    add_outcome_probs_flag,
     max_iter=50000,
     seed=SEED,
     n_repeats=5,
@@ -39,7 +79,6 @@ def loop_through_l1(
             for split_id in range(n_splits):
                 export_path = (
                     base_save_dir
-                    # / f"{l1_ratio}-{repeat}-{split_id}.parquet"
                     / f"l1_{l1_ratio}"
                     / f"repeat_{repeat}"
                     / f"split_{split_id}.parquet"
@@ -51,10 +90,10 @@ def loop_through_l1(
                         l1_val=l1_ratio,
                         split_id=split_id,
                         impact_type=impact_type,
-                        add_outcome_probs_flag=add_outcome_probs_flag,
                         export_path=export_path,
                         max_iter=max_iter,
                         seed=seed,
+                        agg_type=agg_type,
                     )
                 )
     ## Run in LR call for each split/c-val combo in parallel
@@ -73,12 +112,12 @@ def build_parser():
         help="One of ['self', 'parent']",
         choices=["self", "parent"],
     )
+    parser.add_argument(
+        "--agg_type", required=True, choices=["reduced", "block", "avg", "max"]
+    )
     parser.add_argument("--alpha_val", required=True, type=float)
     parser.add_argument("--df_path", required=True)
     parser.add_argument("--base_save_dir", required=True)
-    parser.add_argument(
-        "--add_outcome_probs_flag", required=True, choices=["True", "False"]
-    )
     parser.add_argument(
         "--seed",
         required=False,
@@ -127,13 +166,12 @@ def build_parser():
 def main(argv=None):
     ## Parse args
     args = build_parser().parse_args(argv)
-    add_outcome_probs_flag = True if args.add_outcome_probs_flag == "True" else False
     loop_through_l1(
         impact_type=args.impact_type,
+        agg_type=args.agg_type,
         alpha_val=args.alpha_val,
         df_path=Path(args.df_path),
         base_save_dir=Path(args.base_save_dir),
-        add_outcome_probs_flag=add_outcome_probs_flag,
         max_iter=args.max_iter,
         seed=args.seed,
         n_repeats=args.n_repeats,

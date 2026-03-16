@@ -7,11 +7,11 @@ import numpy as np
 
 def get_lr_output(
     df,
+    agg_type,
     alpha_val,
     l1_val,
     split_id,
     impact_type,
-    add_outcome_probs_flag,
     export_path,
     max_iter,
     seed=SEED,
@@ -32,13 +32,14 @@ def get_lr_output(
     X_train_quest = train_set[quest_cols].to_numpy(dtype=int)
     X_test_quest = test_reset[quest_cols].to_numpy(dtype=int)
     # Add outcome probs to X if prompted
-    if add_outcome_probs_flag:
+    if agg_type != "reduced":
+        col_to_add = f"prob_vector_{agg_type}"
         # Train X
-        X_train_proba_vector = np.vstack(train_set["prob_vector"].values).astype(float)
+        X_train_proba_vector = np.vstack(train_set[col_to_add].values).astype(float)
         X_train = np.hstack([X_train_quest, X_train_proba_vector])
         assert X_train.shape[1] == len(quest_cols) + len(X_train_proba_vector[0])
         # Test X
-        X_test_proba_vector = np.vstack(test_set["prob_vector"].values).astype(float)
+        X_test_proba_vector = np.vstack(test_set[col_to_add].values).astype(float)
         X_test = np.hstack([X_test_quest, X_test_proba_vector])
         assert X_test.shape[1] == len(quest_cols) + len(X_test_proba_vector[0])
     # Otherwise X just questionaire responses

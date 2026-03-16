@@ -21,7 +21,7 @@ def import_df(import_path):
 
 def gen_embeds(
     og_df_path,
-    text_col_name,
+    text_col_names,
     model_id,
     log_path,
     result_path,
@@ -31,9 +31,8 @@ def gen_embeds(
     -------
     og_df_path: pandas DF
         Original df containing text to be embeded
-    text_col_name: str
-        Name of text column to be embedded, will usually be:
-        - question_answer --> for block-level embeddings/preds
+    text_col_names: list[str]
+        List of name of text columns to be embedded
     model_id: str
         path to local model to be used
     log_path: str
@@ -73,34 +72,54 @@ def gen_embeds(
     logging.info(f"Successfully loaded model: {model_id}")
     ## Load df containing text to be embeded
     df_import = import_df(og_df_path)
-    num_embeds = len(df_import)
-    logging.info(f"Successfully loaded df of length: {num_embeds}")
-    ## =======================> Loop through rows and embed
+    num_rows = len(df_import)
+    num_cols_to_embed = len(text_col_names)
+    logging.info(f"Successfully loaded df of length: {num_rows}")
+    ## =======================> Loop through rows and embed for each text_col_name
     new_row_list = []
-    for counter, (_, row) in enumerate(df_import.iterrows()):
+    for row_counter, (_, row) in enumerate(df_import.iterrows()):
         ## ===================> Output progress
-        prog = f"{counter} / {num_embeds}"
-        logging.info(prog)
-        # output_progress(counter, num_embeds)
-        text = getattr(row, text_col_name)
-        inputs = llama3_tokenizer_fast(text, return_tensors="pt")
-        inputs = inputs.to("cuda")
-        with torch.no_grad():
-            outputs = llama3_model(**inputs, return_dict=True)  # [0]
-            ## Avgs last hidden state's weights over all tokens
-            version1 = (
-                outputs.last_hidden_state[:,].to("cpu").detach().numpy().mean(axis=1)[0]
-            )
-            ## Append embedding
-            new_row = row.to_dict().copy()
-            new_row["embedding"] = version1.tolist()
-            new_row_list.append(new_row)
+        logging.info(f"Row: {row_counter + 1} / {num_rows}")
+        cur_row = row.to_dict().copy()
+        new_entry_dict = {}
+        for col_counter, text_col_name in enumerate(text_col_names):
+            ## ===================> Output progress
+            # logging.info(f"\t Col: {col_counter + 1} / {num_cols_to_embed}") --> nvm too much logging
+            text = getattr(row, text_col_name)
+            inputs = llama3_tokenizer_fast(text, return_tensors="pt")
+            inputs = inputs.to("cuda")
+            with torch.no_grad():
+                outputs = llama3_model(**inputs, return_dict=True)  # [0]
+                ## Avgs last hidden state's weights over all tokens
+                version1 = (
+                    outputs.last_hidden_state[:,]
+                    .to("cpu")
+                    .detach()
+                    .numpy()
+                    .mean(axis=1)[0]
+                )
+            ## Append embedding to current rows dict of embeddings
+            new_entry_dict[f"{text_col_name}_embedding"] = version1.tolist()
+        # Append embeddings for all cols in cur row into one large dict (resulting row in df)
+        new_row = {
+            **cur_row,
+            **new_entry_dict,
+        }
+        # Add to list, later converted to df
+        new_row_list.append(new_row)
     embed_df = pd.DataFrame(new_row_list)
     assert (
-        len(embed_df) == num_embeds
+        len(embed_df) == num_rows
     ), f""" Generated df with embeddings does not match original length:
-        Original length: {num_embeds}
+        Original length: {num_rows}
         Embed df length: {len(embed_df)}
+    """.strip()
+    assert embed_df.shape[1] == (
+        df_import.shape[1] + num_cols_to_embed
+    ), f""" Generated df with embeddings does not match expected increase in width:
+        Original width: {df_import.shape[1]}
+        Expected increase: {num_cols_to_embed}
+        Embed df width: {embed_df.shape[1]}
     """.strip()
     ## =======================> Export
     result_path = Path(result_path)
@@ -114,7 +133,7 @@ def gen_embeds(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--og_df_path", required=True)
-    parser.add_argument("--text_col_name", required=True)
+    parser.add_argument("--text_col_names", nargs="+", required=True)
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--log-path", required=True)
     parser.add_argument("--result-path", required=True)
@@ -123,7 +142,7 @@ def main():
 
     gen_embeds(
         og_df_path=args.og_df_path,
-        text_col_name=args.text_col_name,
+        text_col_names=args.text_col_names,
         model_id=args.model_id,
         log_path=args.log_path,
         result_path=args.result_path,
