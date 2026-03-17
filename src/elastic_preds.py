@@ -1,6 +1,6 @@
 from .config import SEED
 from .utils import L1_LIST
-from .lr import get_lr_output
+from .elastic_func import get_lr_output
 
 import pandas as pd
 from joblib import Parallel, delayed

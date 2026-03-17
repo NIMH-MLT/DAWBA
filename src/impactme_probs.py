@@ -84,8 +84,15 @@ def add_prob_vector_block(embed_df, outcome_order, lr_model_dict):
 
 
 def add_prob_vector(
-    embed_path, impact_type, model_name, impactme_seg_type, export_path
+    embed_path, impact_type, model_name, impactme_seg_type, export_path, make_0=True
 ):
+    """
+    Params
+    ------
+
+    make_0: Boolean
+        Flag indicating whether or not to fill in prob vectors with np.zeros() for participants who weren't prompted to fill open text responses
+    """
     ## ========> Validate input
     validate_input(impact_type, model_name, impactme_seg_type)
     ## ========== Load df w/ text embeddings
@@ -110,6 +117,21 @@ def add_prob_vector(
     )
     ## Add raw prob vector from block text
     embed_df = add_prob_vector_block(embed_df, outcome_order, lr_model_dict)
+
+    # Replace prob embeddings w/ vector of all 0's if question not answered (designated by `Not applicable` or `Not answered`)
+    mask = embed_df["open_text_block"].str.contains("Not applicable")
+    n_matches = mask.sum()
+    if (n_matches != 0) and make_0:
+        zero_vectors = [np.zeros(len(outcome_order)) for _ in range(n_matches)]
+        embed_df.loc[mask, "prob_vector_block"] = pd.Series(
+            zero_vectors, index=embed_df.index[mask]
+        )
+        embed_df.loc[mask, "prob_vector_avg"] = pd.Series(
+            zero_vectors, index=embed_df.index[mask]
+        )
+        embed_df.loc[mask, "prob_vector_max"] = pd.Series(
+            zero_vectors, index=embed_df.index[mask]
+        )
     # ====> Export
     if export_path.exists():
         export_path.unlink()
