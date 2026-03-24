@@ -6,11 +6,6 @@ import pandas as pd
 import torch
 
 
-# TODO:
-# 1) Add extra prob ordering check in add_prob_vector_avg_max
-# 2) 0 out probs for entries w/ 'Not applicable'
-
-
 def validate_input(impact_type, model_name, impactme_seg_type):
     if impact_type not in ["self", "parent"]:
         raise ValueError(
@@ -119,7 +114,7 @@ def add_prob_vector(
     embed_df = add_prob_vector_block(embed_df, outcome_order, lr_model_dict)
 
     # Replace prob embeddings w/ vector of all 0's if question not answered (designated by `Not applicable` or `Not answered`)
-    mask = embed_df["open_text_block"].str.contains("Not applicable")
+    mask = embed_df["no_text"].astype(bool)
     n_matches = mask.sum()
     if (n_matches != 0) and make_0:
         zero_vectors = [np.zeros(len(outcome_order)) for _ in range(n_matches)]

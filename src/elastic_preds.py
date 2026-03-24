@@ -103,7 +103,7 @@ def loop_through_l1(
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="lr_preds",
+        prog="elastic_preds",
         description="For each alpha and l1 value, get elasticnet regression results for each fold",
     )
     parser.add_argument(
@@ -113,7 +113,9 @@ def build_parser():
         choices=["self", "parent"],
     )
     parser.add_argument(
-        "--agg_type", required=True, choices=["reduced", "block", "avg", "max"]
+        "--agg_type",
+        required=True,
+        choices=["reduced", "block", "avg", "max", "0_shot"],
     )
     parser.add_argument("--alpha_val", required=True, type=float)
     parser.add_argument("--df_path", required=True)

@@ -33,7 +33,10 @@ def get_lr_output(
     X_test_quest = test_reset[quest_cols].to_numpy(dtype=int)
     # Add outcome probs to X if prompted
     if agg_type != "reduced":
-        col_to_add = f"prob_vector_{agg_type}"
+        if agg_type in ["avg", "max", "block"]:
+            col_to_add = f"prob_vector_{agg_type}"
+        else:  ## 0-shot
+            col_to_add = "open_text_block_0_shot"
         # Train X
         X_train_proba_vector = np.vstack(train_set[col_to_add].values).astype(float)
         X_train = np.hstack([X_train_quest, X_train_proba_vector])
@@ -56,7 +59,15 @@ def get_lr_output(
     )
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
-    output_df = pd.DataFrame({"true": y_test, "pred": y_pred})
+    ## ===========> Create df
+
+    dawba_id_series = test_reset["DAWBA_ID"]
+    # print(f"DAWBA ID SIZE: {len(dawba_id_series)}")
+    # print(f"TRUE: {len(y_test)}")
+    # print(f"PRED: {len(y_pred)}")
+    output_df = pd.DataFrame(
+        {"DAWBA_ID": dawba_id_series, "true": y_test, "pred": y_pred}
+    )
     ## Export
     if export_path.exists():
         export_path.unlink()
