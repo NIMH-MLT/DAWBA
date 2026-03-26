@@ -286,31 +286,32 @@ def get_results_proba(
     tot_rows = len(text_df)
     for counter, (_, row) in enumerate(text_df.iterrows()):
         logging.info(f"{counter}/{tot_rows}")
-        if row.no_text == 1:
-            outcome_probs = np.zeros(len(outcome_names))
-        else:
-            text_ = row.open_text_block
-            outcome_probs = []
-            # Ensure outcome order
-            outcomes_ordered = sorted(outcome_names)
-            for outcome_name in outcomes_ordered:
-                prompt = gen_prompt(
-                    cur_outcome=outcome_name,
-                    text_=text_,
-                    impact_type=impact_type,
-                    outcome_desc_type=outcome_desc_type,
-                    n_shot=n_shot,
-                )
-                output = get_output_proba(
-                    model,
-                    tokenizer,
-                    prompt,
-                    token_ids,
-                    limit_output=limit_output,
-                    temp=temp,
-                )
-                proba = output["prob_1_normalized"]
-                outcome_probs.append(proba)
+        ## No longer have participants w/o text
+        # if row.no_text == 1:
+        #     outcome_probs = np.zeros(len(outcome_names))
+        # else:
+        text_ = row.open_text_block
+        outcome_probs = []
+        # Ensure outcome order
+        outcomes_ordered = sorted(outcome_names)
+        for outcome_name in outcomes_ordered:
+            prompt = gen_prompt(
+                cur_outcome=outcome_name,
+                text_=text_,
+                impact_type=impact_type,
+                outcome_desc_type=outcome_desc_type,
+                n_shot=n_shot,
+            )
+            output = get_output_proba(
+                model,
+                tokenizer,
+                prompt,
+                token_ids,
+                limit_output=limit_output,
+                temp=temp,
+            )
+            proba = output["prob_1_normalized"]
+            outcome_probs.append(proba)
         new_row = row.to_dict()
         new_row["open_text_block_0_shot"] = np.array(outcome_probs)
         df_rows.append(new_row)

@@ -25,16 +25,20 @@ def add_prob_vector_avg_max(embed_df, impact_type, outcome_order, lr_model_dict)
     text_cols = col_config_sensitivity[f"{impact_type}_text"]
     probs_by_text = {}  # {text_col: DF(n_participants x n_outcomes)}
     for text_col in text_cols:
-        embed_col = f"{text_col}_embedding"
-        ## ==========> Get probs
-        X = np.stack(embed_df[embed_col].values).astype(np.float16)
-        if not torch.is_tensor(X):
-            X = torch.from_numpy(X)
-        this_probs = {}
-        for outcome_name in outcome_order:
-            lr_model = lr_model_dict[outcome_name]
-            y_proba = lr_model.predict_proba(X)[:, 1]
-            this_probs[outcome_name] = y_proba
+        ## If question not answered, fill probs with 0
+        if "Not answered" in embed_df[text_col]:
+            this_probs = {outcome_name: 0 for outcome_name in outcome_order}
+        else:
+            embed_col = f"{text_col}_embedding"
+            ## ==========> Get probs
+            X = np.stack(embed_df[embed_col].values).astype(np.float16)
+            if not torch.is_tensor(X):
+                X = torch.from_numpy(X)
+            this_probs = {}
+            for outcome_name in outcome_order:
+                lr_model = lr_model_dict[outcome_name]
+                y_proba = lr_model.predict_proba(X)[:, 1]
+                this_probs[outcome_name] = y_proba
         probs_df = pd.DataFrame(this_probs, index=embed_df.index)
         probs_by_text[text_col] = probs_df
 
@@ -112,21 +116,6 @@ def add_prob_vector(
     )
     ## Add raw prob vector from block text
     embed_df = add_prob_vector_block(embed_df, outcome_order, lr_model_dict)
-
-    # Replace prob embeddings w/ vector of all 0's if question not answered (designated by `Not applicable` or `Not answered`)
-    mask = embed_df["no_text"].astype(bool)
-    n_matches = mask.sum()
-    if (n_matches != 0) and make_0:
-        zero_vectors = [np.zeros(len(outcome_order)) for _ in range(n_matches)]
-        embed_df.loc[mask, "prob_vector_block"] = pd.Series(
-            zero_vectors, index=embed_df.index[mask]
-        )
-        embed_df.loc[mask, "prob_vector_avg"] = pd.Series(
-            zero_vectors, index=embed_df.index[mask]
-        )
-        embed_df.loc[mask, "prob_vector_max"] = pd.Series(
-            zero_vectors, index=embed_df.index[mask]
-        )
     # ====> Export
     if export_path.exists():
         export_path.unlink()

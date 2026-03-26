@@ -98,7 +98,7 @@ col_config_og = {
         "p_dep_18k_self_harm_act_recent",
         "p_dep_18l_self_harm_act_ever",
     ],
-    "meta": ["DAWBA_ID", "eligible_group"],
+    "meta": ["DAWBA_ID", "eligible_group", "Participant_Type2"],
 }
 
 
