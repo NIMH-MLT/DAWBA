@@ -155,6 +155,35 @@ def gen_prompt(cur_outcome, text_, impact_type, outcome_desc_type, n_shot=0):
 ########################################################################
 ############################### Helpers ################################
 ########################################################################
+def get_output_binary(
+    pipeline,
+    prompt,
+    eos_token_id,
+    temp,
+    top_p,
+):
+    message = [{"role": "user", "content": prompt}]
+    sequences = pipeline(
+        message,
+        max_new_tokens=1,
+        eos_token_id=eos_token_id,
+        pad_token_id=eos_token_id,
+        do_sample=True,
+        temperature=temp,
+        top_p=top_p,
+        use_cache=True,
+        num_beams=1,  # Ensure not using beam search accidentally
+    )
+    raw_output = sequences[0]["generated_text"][-1]["content"].strip()
+    try:
+        output = int(raw_output)
+        # logging.info("Success! Adding prediction...")
+    except ValueError:
+        output = -1
+        logging.error(f"\t Failure! Output: {raw_output}; Adding -1...")
+    return output
+
+
 def get_output_proba(model, tokenizer, prompt, token_ids, limit_output, temp):
     """
     Params
@@ -269,6 +298,55 @@ def export_df(save_path, df, impact_type):
 ########################################################################
 ######################### Sequential loopers ###########################
 ########################################################################
+## Binary
+def get_results_binary(
+    text_df,
+    outcome_names,
+    llm_model,
+    eos_token_id,
+    temp,
+    top_p,
+    outcome_desc_type,
+    impact_type,
+    n_shot,
+):
+    """
+    Parameters
+    ---------
+    outcome_desc_type: str
+        One of ['original', 'short', 'augment']
+    output_type: str
+        One of ['binary', 'proba', ''proba-limited']
+    """
+    df_rows = []
+    tot_rows = len(text_df)
+    for counter, (_, row) in enumerate(text_df.iterrows()):
+        logging.info(f"{counter}/{tot_rows}")
+        text_ = row.open_text_block
+        outcome_probs = []
+        outcomes_ordered = sorted(outcome_names)
+        for outcome_name in outcomes_ordered:
+            prompt = gen_prompt(
+                cur_outcome=outcome_name,
+                text_=text_,
+                impact_type=impact_type,
+                outcome_desc_type=outcome_desc_type,
+                n_shot=n_shot,
+            )
+            output = get_output_binary(
+                pipeline=llm_model,
+                prompt=prompt,
+                eos_token_id=eos_token_id,
+                temp=temp,
+                top_p=top_p,
+            )
+            outcome_probs.append(output)
+        new_row = row.to_dict()
+        new_row["open_text_block_0_shot_binary"] = np.array(outcome_probs)
+        df_rows.append(new_row)
+    return pd.DataFrame(df_rows)
+
+
 ## Probability
 def get_results_proba(
     tokenizer,
@@ -281,15 +359,12 @@ def get_results_proba(
     impact_type,
     limit_output,
 ):
+    new_col_suffix = "proba_limited" if limit_output else "proba"
     token_ids = get_binary_token_ids(tokenizer)
     df_rows = []
     tot_rows = len(text_df)
     for counter, (_, row) in enumerate(text_df.iterrows()):
         logging.info(f"{counter}/{tot_rows}")
-        ## No longer have participants w/o text
-        # if row.no_text == 1:
-        #     outcome_probs = np.zeros(len(outcome_names))
-        # else:
         text_ = row.open_text_block
         outcome_probs = []
         # Ensure outcome order
@@ -313,7 +388,7 @@ def get_results_proba(
             proba = output["prob_1_normalized"]
             outcome_probs.append(proba)
         new_row = row.to_dict()
-        new_row["open_text_block_0_shot"] = np.array(outcome_probs)
+        new_row[f"block_0_shot_{new_col_suffix}"] = np.array(outcome_probs)
         df_rows.append(new_row)
     return pd.DataFrame(df_rows)
 
@@ -377,8 +452,28 @@ def get_shot_results(
     )
     logging.info(f"RAW Model: {Path(model_id).name} loaded")
     if output_type == "binary":
-        ## Fill this out later if want binary
-        pass
+        top_p = llm_config["top_p"]
+        ## pipeline
+        pipeline = transformers.pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            device_map="balanced",
+        )
+        eos_token_id = pipeline.tokenizer.eos_token_id
+        logging.info(f"Running model for binary output...")
+        ## Run model
+        df_w_preds = get_results_binary(
+            text_df=text_df,
+            outcome_names=outcome_names,
+            llm_model=pipeline,
+            eos_token_id=eos_token_id,
+            temp=temp,
+            top_p=top_p,
+            outcome_desc_type=outcome_desc_type,
+            impact_type=impact_type,
+            n_shot=n_shot,
+        )
     else:  ## probability output, no need for pipeline wrapper
         limit_output = True if output_type == "proba-limited" else False
         logging.info(

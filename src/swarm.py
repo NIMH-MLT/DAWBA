@@ -31,8 +31,9 @@ def run_swarms(*_, agg_list, impact_list, swarm_log_dir, cmd_dir, n_jobs, n_thre
 ################# MAKE CMD STRINGS #################
 ####################################################
 SPLIT_TOL = 0.2
-N_SPLITS = 4
+N_SPLITS = 3
 N_REPEATS = 10
+
 
 def create_cmd_str(
     impact_type,
@@ -43,7 +44,6 @@ def create_cmd_str(
     seed,
     n_repeats,
     split_tol,
-    n_splits,
     n_jobs,
     n_threads,
     max_iter=10000,
@@ -64,15 +64,15 @@ def create_cmd_str(
 			--seed {seed}\
 			--n_repeats {n_repeats}\
 			--split_tol {split_tol}\
-			--n_splits {n_splits}\
+			--n_splits {N_SPLITS}\
 			--n_jobs {n_jobs}\
 			--max_iter {max_iter}"
     return " ".join(cmd_str.split())
 
 
-def make_reduced(impact_type, alpha_val, base_save_dir,n_jobs, n_threads):
+def make_reduced(impact_type, alpha_val, base_save_dir, n_jobs, n_threads):
     df_path = BASE_PATH / "data" / "cleaned" / "processed" / f"{impact_type}.parquet"
-    save_dir =  base_save_dir/ "reduced" / impact_type / f"alpha_{alpha_val}"
+    save_dir = base_save_dir / "reduced" / impact_type / f"alpha_{alpha_val}"
     cmd_str = create_cmd_str(
         impact_type=impact_type,
         alpha_val=alpha_val,
@@ -96,10 +96,9 @@ def make_full_lr(
     alpha_val,
     agg_type,
     base_save_dir,
-    n_jobs, 
+    n_jobs,
     n_threads,
     max_iter=50000,  # need more iters to converge bc of higher dimension w/ embeddings
-    
 ):
     cmd_list = []
     for seg_type in seg_types:
@@ -127,11 +126,10 @@ def make_full_lr(
             seed=SEED,
             n_repeats=N_REPEATS,
             split_tol=SPLIT_TOL,
-            n_splits=N_SPLITS,
             n_jobs=n_jobs,
             max_iter=max_iter,  # need more iters to converge bc of higher dimension w/ embeddings
             agg_type=agg_type,
-            n_threads=n_threads
+            n_threads=n_threads,
         )
         cmd_list.append(cmd_str)
     return cmd_list
@@ -176,7 +174,6 @@ def make_full_shot(
         seed=SEED,
         n_repeats=N_REPEATS,
         split_tol=SPLIT_TOL,
-        n_splits=N_SPLITS,
         n_jobs=n_jobs,
         n_threads=n_threads,
         max_iter=max_iter,

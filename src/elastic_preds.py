@@ -11,7 +11,7 @@ from sklearn.model_selection import StratifiedKFold
 import numpy as np
 
 
-def add_split_col(df, pred_type, n_splits=4, tol=0.1, random_state=SEED, verbose=0):
+def add_split_col(df, pred_type, n_splits, tol=0.1, random_state=SEED, verbose=0):
     df = df.copy()
     if verbose != 0:
         print(f"Pred type: {pred_type}")
@@ -60,11 +60,11 @@ def loop_through_l1(
     alpha_val,
     df_path,
     base_save_dir,
+    n_splits,
     max_iter=50000,
     seed=SEED,
     n_repeats=5,
     split_tol=0.1,
-    n_splits=4,
     n_jobs=1,
     verbose=0,
 ):
@@ -151,7 +151,7 @@ def build_parser():
         required=False,
         type=int,
         help="Optional integer determining how many folds to use for CV, defaults to 4",
-        default=4,
+        default=3,
     )
     parser.add_argument(
         "--n_jobs",

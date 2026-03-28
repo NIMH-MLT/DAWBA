@@ -1,9 +1,11 @@
 ## elastic_func.py
 from .config import SEED
 from src.utils import col_config_sensitivity
-from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import ElasticNet, LinearRegression
 import pandas as pd
 import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
 
 
 def get_lr_output(
@@ -30,8 +32,11 @@ def get_lr_output(
     y_train = train_reset[f"impact_score_{impact_type}"]
     y_test = test_reset[f"impact_score_{impact_type}"]
     # X-questionaire answers
-    X_train_quest = train_set[quest_cols].to_numpy(dtype=int)
-    X_test_quest = test_reset[quest_cols].to_numpy(dtype=int)
+    X_train_quest = train_set[quest_cols]
+    X_test_quest = test_reset[quest_cols]
+
+    X_train_quest_np = X_train_quest.to_numpy(dtype=int)
+    X_test_quest_np = X_test_quest.to_numpy(dtype=int)
     # Add outcome probs to X if prompted
     if agg_type != "reduced":
         if agg_type in ["avg", "max", "block"]:
@@ -40,32 +45,49 @@ def get_lr_output(
             col_to_add = "open_text_block_0_shot"
         # Train X
         X_train_proba_vector = np.vstack(train_set[col_to_add].values).astype(float)
-        X_train = np.hstack([X_train_quest, X_train_proba_vector])
+        X_train = np.hstack([X_train_quest_np, X_train_proba_vector])
         assert X_train.shape[1] == len(quest_cols) + len(X_train_proba_vector[0])
         # Test X
         X_test_proba_vector = np.vstack(test_set[col_to_add].values).astype(float)
-        X_test = np.hstack([X_test_quest, X_test_proba_vector])
+        X_test = np.hstack([X_test_quest_np, X_test_proba_vector])
         assert X_test.shape[1] == len(quest_cols) + len(X_test_proba_vector[0])
     # Otherwise X just questionaire responses
     else:
-        X_train = X_train_quest
-        X_test = X_test_quest
+        X_train = X_train_quest_np
+        X_test = X_test_quest_np
+
     ## ============> Modeling
-    model = ElasticNet(
+    ## just elasticnet on questionnaire data ##
+    elastic_model = ElasticNet(
         alpha=alpha_val,
         l1_ratio=l1_val,
         fit_intercept=True,
         max_iter=max_iter,
         random_state=seed,
     )
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    ## ===========> Create df
 
+    elastic_model.fit(X_train, y_train)
+    y_pred = elastic_model.predict(X_test)
+
+    ## PCA --> elasticnet pipeline ##
+    # linear_model = LinearRegression()
+    # pipeline = Pipeline(
+    #     [
+    #         ("pca", PCA(random_state=SEED)),
+    #         ("regressor", elastic_model),
+    #     ]
+    # )
+    # pipeline.fit(X_train, y_train)
+    # y_pred = pipeline.predict(X_test)
+
+    ## Fit just on questionnaire sum scores ##
+    # X_train_sum = X_train_quest.sum(axis=1).to_numpy(dtype=int).reshape(-1, 1)
+    # X_test_sum = X_test_quest.sum(axis=1).to_numpy(dtype=int).reshape(-1, 1)
+    # linear_model.fit(X_train_sum, y_train)
+    # y_pred = linear_model.predict(X_test_sum)
+
+    ## ===========> Create df
     dawba_id_series = test_reset["DAWBA_ID"]
-    # print(f"DAWBA ID SIZE: {len(dawba_id_series)}")
-    # print(f"TRUE: {len(y_test)}")
-    # print(f"PRED: {len(y_pred)}")
     output_df = pd.DataFrame(
         {"DAWBA_ID": dawba_id_series, "true": y_test, "pred": y_pred}
     )
