@@ -81,7 +81,6 @@ def make_reduced(impact_type, alpha_val, base_save_dir, n_jobs, n_threads):
         seed=SEED,
         n_repeats=N_REPEATS,
         split_tol=SPLIT_TOL,
-        n_splits=N_SPLITS,
         n_jobs=n_jobs,
         n_threads=n_threads,
         agg_type="reduced",
@@ -142,8 +141,8 @@ def make_full_shot(
     base_save_dir,
     n_jobs,
     n_threads,
-    temp=0.6,
-    pred_type="proba-limited",
+    pred_type,
+    temp=0.6, 
     desc_type="augment",
     max_iter=50000,  # need more iters to converge bc of higher dimension w/ embeddings
 ):
@@ -159,10 +158,9 @@ def make_full_shot(
     )
     save_dir = (
         base_save_dir
-        / "0_shot"
+        / f"0_shot_{pred_type}"
         / impact_type
         / model_name
-        / f"output_{pred_type}"
         / f"desc_{desc_type}"
         / f"alpha_{alpha_val}"
     )
@@ -177,6 +175,6 @@ def make_full_shot(
         n_jobs=n_jobs,
         n_threads=n_threads,
         max_iter=max_iter,
-        agg_type="0_shot",
+        agg_type=pred_type,
     )
     return cmd_str

@@ -388,6 +388,7 @@ def get_results_proba(
             proba = output["prob_1_normalized"]
             outcome_probs.append(proba)
         new_row = row.to_dict()
+        # current col is called open_text_block_0_shot, need to rerun
         new_row[f"block_0_shot_{new_col_suffix}"] = np.array(outcome_probs)
         df_rows.append(new_row)
     return pd.DataFrame(df_rows)

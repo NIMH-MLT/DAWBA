@@ -1,11 +1,9 @@
 ## elastic_func.py
 from .config import SEED
 from src.utils import col_config_sensitivity
-from sklearn.linear_model import ElasticNet, LinearRegression
+from sklearn.linear_model import ElasticNet
 import pandas as pd
 import numpy as np
-from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
 
 
 def get_lr_output(
@@ -41,8 +39,15 @@ def get_lr_output(
     if agg_type != "reduced":
         if agg_type in ["avg", "max", "block"]:
             col_to_add = f"prob_vector_{agg_type}"
-        else:  ## 0-shot
+        ## 0-shot
+        elif agg_type == "binary":
+            col_to_add = "open_text_block_0_shot_binary"
+        elif agg_type == "proba-limited":
+            # col_to_add = "block_0_shot_proba_limited"
             col_to_add = "open_text_block_0_shot"
+        else:
+            raise ValueError(f"Unrecognized agg_type: {agg_type}")
+
         # Train X
         X_train_proba_vector = np.vstack(train_set[col_to_add].values).astype(float)
         X_train = np.hstack([X_train_quest_np, X_train_proba_vector])
@@ -68,23 +73,6 @@ def get_lr_output(
 
     elastic_model.fit(X_train, y_train)
     y_pred = elastic_model.predict(X_test)
-
-    ## PCA --> elasticnet pipeline ##
-    # linear_model = LinearRegression()
-    # pipeline = Pipeline(
-    #     [
-    #         ("pca", PCA(random_state=SEED)),
-    #         ("regressor", elastic_model),
-    #     ]
-    # )
-    # pipeline.fit(X_train, y_train)
-    # y_pred = pipeline.predict(X_test)
-
-    ## Fit just on questionnaire sum scores ##
-    # X_train_sum = X_train_quest.sum(axis=1).to_numpy(dtype=int).reshape(-1, 1)
-    # X_test_sum = X_test_quest.sum(axis=1).to_numpy(dtype=int).reshape(-1, 1)
-    # linear_model.fit(X_train_sum, y_train)
-    # y_pred = linear_model.predict(X_test_sum)
 
     ## ===========> Create df
     dawba_id_series = test_reset["DAWBA_ID"]

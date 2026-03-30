@@ -120,7 +120,7 @@ def build_parser():
     parser.add_argument(
         "--agg_type",
         required=True,
-        choices=["reduced", "block", "avg", "max", "0_shot"],
+        choices=["reduced", "block", "avg", "max", "binary", "proba-limited"],
     )
     parser.add_argument("--alpha_val", required=True, type=float)
     parser.add_argument("--df_path", required=True)
