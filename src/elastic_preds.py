@@ -62,6 +62,7 @@ def loop_through_l1(
     df_path,
     base_save_dir,
     n_splits,
+    num_layers,
     max_iter=50000,
     seed=SEED,
     n_repeats=5,
@@ -71,55 +72,85 @@ def loop_through_l1(
 ):
     joblist = []
     df = pd.read_parquet(df_path)
-    for alpha_2 in ALPHA_LIST:  # ALPHA_LIST
-        for alpha_3 in ALPHA_LIST:
-            selected_alphas = [alpha_2, alpha_3]
-            for repeat in range(n_repeats):
-                random_state_for_split = seed + repeat
-                df_w_splits = add_split_col(
-                    df=df,
-                    pred_type=impact_type,
-                    tol=split_tol,
-                    random_state=random_state_for_split,
-                    n_splits=n_splits,
-                    verbose=verbose,
-                )
-                for l1_ratio_2 in L1_LIST:
-                    for l1_ratio_3 in L1_LIST:
-                        for split_id in range(n_splits):
-                            export_path = (
-                                base_save_dir
-                                / f"alpha_{alpha_2}_{alpha_3}"
-                                / f"l1_{l1_ratio_2}_{l1_ratio_3}"
-                                / f"repeat_{repeat}"
-                                / f"split_{split_id}.parquet"
+    for repeat in range(n_repeats):
+        random_state_for_split = seed + repeat
+        df_w_splits = add_split_col(
+            df=df,
+            pred_type=impact_type,
+            tol=split_tol,
+            random_state=random_state_for_split,
+            n_splits=n_splits,
+            verbose=verbose,
+        )
+        for alpha_3 in ALPHA_LIST:  # ALPHA_LIST
+            for l1_ratio_3 in L1_LIST:
+                for split_id in range(n_splits):
+                    if num_layers == 2:
+                        selected_alphas = [None, alpha_3]
+                        selected_l1s = [None, l1_ratio_3]
+                        export_path = (
+                            base_save_dir
+                            / f"alpha_{alpha_3}"
+                            / f"l1_{l1_ratio_3}"
+                            / f"repeat_{repeat}"
+                            / f"split_{split_id}.parquet"
+                        )
+                        joblist.append(
+                            delayed(get_lr_output)(
+                                df=df_w_splits,
+                                num_layers=num_layers,
+                                selected_alphas=selected_alphas,
+                                selected_l1s=selected_l1s,
+                                split_id=split_id,
+                                impact_type=impact_type,
+                                export_path=export_path,
+                                max_iter=max_iter,
+                                seed=seed,
+                                agg_type=agg_type,
                             )
-                            selected_l1s = [l1_ratio_2, l1_ratio_3]
-                            joblist.append(
-                                delayed(get_lr_output)(
-                                    df=df_w_splits,
-                                    selected_alphas=selected_alphas,
-                                    selected_l1s=selected_l1s,
-                                    split_id=split_id,
-                                    impact_type=impact_type,
-                                    export_path=export_path,
-                                    max_iter=max_iter,
-                                    seed=seed,
-                                    agg_type=agg_type,
+                        )
+                    else:  # 3 layers
+                        for alpha_2 in ALPHA_LIST:
+                            for l1_ratio_2 in L1_LIST:
+                                selected_alphas = [alpha_2, alpha_3]
+                                selected_l1s = [l1_ratio_2, l1_ratio_3]
+                                export_path = (
+                                    base_save_dir
+                                    / f"alpha_{alpha_2}_{alpha_3}"
+                                    / f"l1_{l1_ratio_2}_{l1_ratio_3}"
+                                    / f"repeat_{repeat}"
+                                    / f"split_{split_id}.parquet"
                                 )
-                            )
+                                joblist.append(
+                                    delayed(get_lr_output)(
+                                        df=df_w_splits,
+                                        num_layers=num_layers,
+                                        selected_alphas=selected_alphas,
+                                        selected_l1s=selected_l1s,
+                                        split_id=split_id,
+                                        impact_type=impact_type,
+                                        export_path=export_path,
+                                        max_iter=max_iter,
+                                        seed=seed,
+                                        agg_type=agg_type,
+                                    )
+                                )
 
     ## Run in LR call for each split/c-val combo in parallel
     _ = Parallel(n_jobs=n_jobs, verbose=verbose)(joblist)
     return None
 
 
-def get_best_params_score(import_dir, show_progress=False):
+def get_best_params_score(import_dir, num_layers, show_progress=False):
     best_params_score_dict_mse = {
         "avg_mse": 9999999,
         "stdev_mse": 9999999,
         "avg_r2": 0,
         "stdev_r2": 9999999,
+        "avg_diff_2_1": 0,
+        "stdev_diff_2_1": 0,
+        "avg_diff_3_2": 0,
+        "stdev_diff_3_2": 0,
         "l1_2": "None",
         "alpha_2": "None",
         "l1_3": "None",
@@ -130,6 +161,10 @@ def get_best_params_score(import_dir, show_progress=False):
         "stdev_mse": 9999999,
         "avg_r2": 0,
         "stdev_r2": 9999999,
+        "avg_diff_2_1": 0,
+        "stdev_diff_2_1": 0,
+        "avg_diff_3_2": 0,
+        "stdev_diff_3_2": 0,
         "l1_2": "None",
         "alpha_2": "None",
         "l1_3": "None",
@@ -151,38 +186,70 @@ def get_best_params_score(import_dir, show_progress=False):
     ) as pbar:
         for alpha_dir in import_dir.iterdir():
             alpha_list = alpha_dir.name.split("_")
-            alpha_2 = alpha_list[1]
-            alpha_3 = alpha_list[2]
             for l1_dir in alpha_dir.iterdir():
                 l1_list = l1_dir.name.split("_")
-                l1_2 = l1_list[1]
-                l1_3 = l1_list[2]
                 mse_list = []
-                r2_list = []
+                final_r2_list = []  # r^2 of layer3 final preds (sum of all layers)
+                diff_2_1_list = []  # layer2 r^2 - layer1 r^2
+                diff_3_2_list = []  # layer3 r^2 - layer2 r^2
+                if num_layers == 3:
+                    alpha_2 = alpha_list[1]
+                    alpha_3 = alpha_list[2]
+                    l1_2 = l1_list[1]
+                    l1_3 = l1_list[2]
+                else:  # 2 layers
+                    alpha_2 = None
+                    alpha_3 = alpha_list[1]
+                    l1_2 = None
+                    l1_3 = l1_list[1]
                 for repeat_dir in l1_dir.iterdir():
                     for split_file in repeat_dir.iterdir():
                         df_import = pd.read_parquet(split_file)
                         y_true = df_import["true"]
-                        y_pred = df_import["pred_stage3_total"]
-                        mse = mean_squared_error(y_true=y_true, y_pred=y_pred)
-                        r2 = r2_score(y_true=y_true, y_pred=y_pred)
+                        # Preds at each layer
+                        y_pred1 = df_import["pred_stage1"]
+                        y_pred2 = df_import["pred_stage2_total"]
+                        y_pred3 = df_import["pred_stage3_total"]
+                        # SE avg
+                        mse = mean_squared_error(y_true=y_true, y_pred=y_pred3)
                         mse_list.append(mse)
-                        r2_list.append(r2)
+                        ## r^2
+                        r2_3 = r2_score(y_true=y_true, y_pred=y_pred3)
+                        r2_2 = r2_score(y_true=y_true, y_pred=y_pred2)
+                        r2_1 = r2_score(y_true=y_true, y_pred=y_pred1)
+                        final_r2_list.append(r2_3)
+                        ## Layer 2-1 avg
+                        diff_2_1 = r2_2 - r2_1
+                        diff_2_1_list.append(diff_2_1)
+                        ## Layer 3-2 avg
+                        diff_3_2 = r2_3 - r2_2
+                        diff_3_2_list.append(diff_3_2)
                         pbar.update(1)
                 # get avg mse across folds/repeats for l1-alpha combo
                 avg_mse = np.mean(mse_list)
-                avg_r2 = np.mean(r2_list)
+                avg_r2 = np.mean(final_r2_list)
                 mse_condition = avg_mse < best_params_score_dict_mse["avg_mse"]
                 r2_condition = avg_r2 > best_params_score_dict_r2["avg_r2"]
                 if mse_condition or r2_condition:
+                    ## MSE/r^2 stdev
                     stdev_mse = np.std(mse_list)
-                    stdev_r2 = np.std(r2_list)
+                    stdev_r2 = np.std(final_r2_list)
+                    # Layer2-Layer1 AVG + STDEV
+                    avg_diff_2_1 = np.mean(diff_2_1_list)
+                    stdev_diff_2_1 = np.std(diff_2_1_list)
+                    # Layer3-Layer2 AVG + STDEV
+                    avg_diff_3_2 = np.mean(diff_3_2_list)
+                    stdev_diff_3_2 = np.std(diff_3_2_list)
                     if mse_condition:
                         best_params_score_dict_mse = {
                             "avg_mse": round(avg_mse, 3),
                             "stdev_mse": round(stdev_mse, 3),
                             "avg_r2": round(avg_r2, 4),
                             "stdev_r2": round(stdev_r2, 4),
+                            "avg_diff_2_1": round(avg_diff_2_1, 4),
+                            "stdev_diff_2_1": round(stdev_diff_2_1, 4),
+                            "avg_diff_3_2": round(avg_diff_3_2, 4),
+                            "stdev_diff_3_2": round(stdev_diff_3_2, 4),
                             "l1_2": l1_2,
                             "alpha_2": alpha_2,
                             "l1_3": l1_3,
@@ -194,6 +261,10 @@ def get_best_params_score(import_dir, show_progress=False):
                             "stdev_mse": round(stdev_mse, 3),
                             "avg_r2": round(avg_r2, 4),
                             "stdev_r2": round(stdev_r2, 4),
+                            "avg_diff_2_1": round(avg_diff_2_1, 4),
+                            "stdev_diff_2_1": round(stdev_diff_2_1, 4),
+                            "avg_diff_3_2": round(avg_diff_3_2, 4),
+                            "stdev_diff_3_2": round(stdev_diff_3_2, 4),
                             "l1_2": l1_2,
                             "alpha_2": alpha_2,
                             "l1_3": l1_3,
@@ -249,6 +320,9 @@ def build_parser():
         default=3,
     )
     parser.add_argument(
+        "--num_layers", required=False, type=int, default=3, choices=[2, 3]
+    )
+    parser.add_argument(
         "--n_jobs",
         required=False,
         type=int,
@@ -282,6 +356,7 @@ def main(argv=None):
         agg_type=args.agg_type,
         df_path=Path(args.df_path),
         base_save_dir=save_dir,
+        num_layers=args.num_layers,
         max_iter=args.max_iter,
         seed=args.seed,
         n_repeats=args.n_repeats,
@@ -292,31 +367,27 @@ def main(argv=None):
 
     if args.tune == "True":
         print("RUNNING TUNER...")
-        best_params_dict = get_best_params_score(save_dir)
+        best_params_dict = get_best_params_score(
+            import_dir=save_dir, num_layers=args.num_layers
+        )
 
         relative_save_dir = save_dir.relative_to(BASE_PATH)
         agg_type = relative_save_dir.parts[1]
         impact_type = relative_save_dir.parts[2]
         model_name = relative_save_dir.parts[3]
+        desc_seg_type = relative_save_dir.parts[4]  # desc for 0-shot, seg for others
         param_save_path = (
             BASE_PATH
-            / "initial_results"
+            / f"initial_results_{args.num_layers}"
             / "best_params"
             / agg_type
             / impact_type
             / model_name
+            / f"{desc_seg_type}.json"
         )
-        param_save_path.mkdir(exist_ok=True, parents=True)
-        ## 0-shot run
-        if "0_shot" in agg_type:
-            desc_type = relative_save_dir.parts[4]
-            with open(param_save_path / f"{desc_type}.json", "w") as f:
-                json.dump(best_params_dict, f, indent=4)
-        # ImpactMe LR models
-        else:
-            seg_type = relative_save_dir.parts[4]
-            with open(param_save_path / f"{seg_type}.json", "w") as f:
-                json.dump(best_params_dict, f, indent=4)
+        param_save_path.parent.mkdir(exist_ok=True, parents=True)
+        with open(param_save_path, "w") as f:
+            json.dump(best_params_dict, f, indent=4)
 
 
 if __name__ == "__main__":

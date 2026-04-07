@@ -18,11 +18,11 @@ def run_swarms(*_, agg_list, impact_list, swarm_log_dir, cmd_dir, n_jobs, n_thre
         for impact_type in impact_list:
             log_dir = swarm_log_dir / agg_type / impact_type
             log_dir.mkdir(parents=True, exist_ok=True)
-            swarm_time = "2:00:0"
+            swarm_time = "0:20:0"
             gb = 12
             swarm_path = cmd_dir / agg_type / f"{impact_type}.swarm"
             num_commands = get_len_swarm(swarm_path=swarm_path)
-            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {(2*n_jobs*n_threads)} --logdir={log_dir}  --job-name={agg_type.upper()}-{impact_type.upper()} --partition=quick {swarm_path}"
+            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {(2*n_jobs*n_threads)} --logdir={log_dir}  --job-name={agg_type.upper()}-{impact_type.upper()} --partition=quick -b 4 {swarm_path}"
             subprocess.run(swarm_cmd, shell=True)
 
 ####################################################
@@ -44,12 +44,14 @@ def create_cmd_str(
     n_jobs,
     n_threads,
     tune_flag_str,
+    n_layers,
     max_iter=10000,
 ):
     """
     Create command for lr_preds
 
     TODO: Check if good file already exists for passed in configuration
+    TODO: Make num_layers dynamic
     """
     cmd_str = f"export PYTHONPATH={BASE_PATH}; \
 			export OMP_NUM_THREADS={n_threads}; \
@@ -58,6 +60,7 @@ def create_cmd_str(
 			--agg_type {agg_type}\
 			--df_path {df_path}\
 			--base_save_dir {base_save_dir}\
+            --num_layers {n_layers}\
 			--seed {seed}\
 			--n_repeats {n_repeats}\
 			--split_tol {split_tol}\
@@ -76,6 +79,7 @@ def make_full_lr(
     n_jobs,
     n_threads,
     tune_flag_str,
+    n_layers,
     max_iter=50000,  # need more iters to converge bc of higher dimension w/ embeddings
 ):
     cmd_list = []
@@ -106,7 +110,8 @@ def make_full_lr(
             max_iter=max_iter,  # need more iters to converge bc of higher dimension w/ embeddings
             agg_type=agg_type,
             n_threads=n_threads,
-            tune_flag_str=tune_flag_str
+            tune_flag_str=tune_flag_str,
+            n_layers=n_layers,
         )
         cmd_list.append(cmd_str)
     return cmd_list
@@ -120,6 +125,7 @@ def make_full_shot(
     n_threads,
     pred_type,
     tune_flag_str,
+    n_layers,
     temp=0.6, 
     desc_type="augment",
     max_iter=50000,  # need more iters to converge bc of higher dimension w/ embeddings
@@ -152,6 +158,7 @@ def make_full_shot(
         n_threads=n_threads,
         max_iter=max_iter,
         agg_type=pred_type,
-        tune_flag_str=tune_flag_str
+        tune_flag_str=tune_flag_str,
+        n_layers=n_layers,
     )
     return cmd_str

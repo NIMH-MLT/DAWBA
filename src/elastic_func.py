@@ -19,6 +19,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         self,
         quest_cols,
         agg_type,
+        num_layers,
         alpha2,
         l1_ratio2,
         alpha3,
@@ -26,8 +27,11 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         seed,
         max_iter=5000,
     ):
+        if num_layers not in [2, 3]:
+            raise ValueError(f"Num layers must be one of [2,3]. Got {num_layers}")
         self.quest_cols = quest_cols
         self.agg_type = agg_type
+        self.num_layers = num_layers
         self.alpha2 = alpha2
         self.l1_ratio2 = l1_ratio2
         self.alpha3 = alpha3
@@ -79,24 +83,42 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
 
         X1, X2, X3 = self._build_X_blocks(X)
 
+        ## Layer 1
         self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
         self.stage1_.fit(X1, y)
         self.pred1_train_ = self.stage1_.predict(X1)
         resid1 = y - self.pred1_train_
 
-        self.stage2_ = self._make_model(
-            alpha=self.alpha2, l1_ratio=self.l1_ratio2, model_type="elastic"
-        )
-        self.stage2_.fit(X2, resid1)
-        self.pred2_train_ = self.stage2_.predict(X2)
-        resid2 = resid1 - self.pred2_train_
+        if self.num_layers == 3:
+            """
+            Layer2--> Use granular questionnaire responses to predict layer 1 residuals
+            Layer3--> Use probs derived from open text responses to predict layer 2 residuals
+            """
+            ## Layer 2
+            self.stage2_ = self._make_model(
+                alpha=self.alpha2, l1_ratio=self.l1_ratio2, model_type="elastic"
+            )
+            self.stage2_.fit(X2, resid1)
+            self.pred2_train_ = self.stage2_.predict(X2)
+            resid2 = resid1 - self.pred2_train_
 
+        else:  # num_layers = 2
+            """
+            -- DROP granular questionnaire layer
+            Layer2--> Copy of layer1
+            Layer3--> Use probs derived from open text repsonses to predict layer2 residuals (same as layer1)
+            """
+            ## Layer2
+            self.stage2_ = self.stage1_
+            self.pred2_train_ = self.pred1_train_
+            resid2 = resid1
+
+        ## Layer 3
         self.stage3_ = self._make_model(
             alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type="elastic"
         )
         self.stage3_.fit(X3, resid2)
         self.pred3_train_ = self.stage3_.predict(X3)
-
         return self
 
     def predict(self, X):
@@ -114,7 +136,12 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
 
         pred1 = self.stage1_.predict(X1)
 
-        pred2 = self.stage2_.predict(X2)
+        ## If 3 layers, use layer2 preds
+        if self.num_layers == 3:
+            pred2 = self.stage2_.predict(X2)
+        ## If 2 layers, skip preds from layer2
+        else:  # num layers = 2
+            pred2 = np.zeros(len(pred1))
         pred2_total = pred1 + pred2
 
         pred3 = self.stage3_.predict(X3)
@@ -135,6 +162,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
 def get_lr_output(
     df,
     agg_type,
+    num_layers,
     selected_alphas,
     selected_l1s,
     split_id,
@@ -160,6 +188,7 @@ def get_lr_output(
     model = ResidualElasticNetRegressor(
         quest_cols=quest_cols,
         agg_type=agg_type,
+        num_layers=num_layers,
         alpha2=selected_alphas[0],
         l1_ratio2=selected_l1s[0],
         alpha3=selected_alphas[1],
@@ -170,7 +199,7 @@ def get_lr_output(
 
     model.fit(train_reset, y_train)
 
-    pred_df = model.predict_all(test_set)
+    pred_df = model.predict_all(test_reset)
 
     ## ===========> Create df
     output_df = pd.DataFrame(

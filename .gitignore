@@ -8,8 +8,8 @@ notebooks/0_tune_en_reduced.ipynb
 notebooks/0_shot_experiment.ipynb
 
 # Results
-initial_results/
-initial_preds/
+initial_results*/
+initial_preds*/
 
 ## Extras
 src/__pycache__
