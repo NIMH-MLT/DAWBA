@@ -222,3 +222,41 @@ L1_LIST = [
     # 0.75,
     # 0.9,
 ]
+
+IMPACTME_OUTCOMES_SHOT = [
+    "a1",
+    "a2",
+    "a3",
+    "a4",
+    "a5",
+    "a6",
+    "a7",
+    "a8",  # --> NOT INCLDUED in LR
+    "b1",
+    "b2",
+    "b3",
+    "c1",
+    "c2",
+    "c3",
+    "c4",
+    "d1",
+    "d2",
+    "d3",
+    "d4",
+    "d5",
+    "d6",
+    "e1",
+    "e2",
+    "e3",  # --> NOT INCLDUED in LR
+    "e4",  # --> NOT INCLDUED in LR
+    "e5",
+    "f1",
+    "f2",
+    "f3",
+    "g1",
+    "g2",
+]
+
+IMPACTME_OUTCOMES_LR = [
+    outcome for outcome in IMPACTME_OUTCOMES_SHOT if outcome not in ["a8", "e3", "e4"]
+]

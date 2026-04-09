@@ -1,6 +1,10 @@
 ## elastic_func.py
 from .config import SEED
-from src.utils import col_config_sensitivity
+from src.utils import (
+    col_config_sensitivity,
+    IMPACTME_OUTCOMES_SHOT,
+    IMPACTME_OUTCOMES_LR,
+)
 from sklearn.linear_model import ElasticNet
 import pandas as pd
 import numpy as np
@@ -25,6 +29,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         alpha3,
         l1_ratio3,
         seed,
+        impactme_outcome,
         max_iter=5000,
     ):
         if num_layers not in [2, 3]:
@@ -38,6 +43,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         self.l1_ratio3 = l1_ratio3
         self.max_iter = max_iter
         self.seed = seed
+        self.impactme_outcome = impactme_outcome
 
     def _get_prob_col(self):
         if self.agg_type in ["avg", "max", "block"]:
@@ -58,7 +64,20 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         quest_sum = quest_np.sum(axis=1, keepdims=True)
 
         prob_col = self._get_prob_col()
-        prob_vec = np.vstack(X[prob_col].values).astype(float)
+
+        if self.impactme_outcome is not None:
+            if self.agg_type in ["avg", "max", "block"]:
+                # LR output doesnt have a8,e3,34
+                outcome_idx = IMPACTME_OUTCOMES_LR.index(self.impactme_outcome)
+            else:
+                # Use all outcomes
+                outcome_idx = IMPACTME_OUTCOMES_SHOT.index(self.impactme_outcome)
+            # extract single probability
+            prob_vals = X[prob_col].str[outcome_idx].values
+        else:
+            # consider probability of all outcomes
+            prob_vals = X[prob_col].values
+        prob_vec = np.vstack(prob_vals).astype(float)
         return quest_sum, quest_np, prob_vec
 
     def _make_model(self, alpha, l1_ratio, model_type):
@@ -114,10 +133,20 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
             resid2 = resid1
 
         ## Layer 3
-        self.stage3_ = self._make_model(
-            alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type="elastic"
-        )
-        self.stage3_.fit(X3, resid2)
+        if self.impactme_outcome is not None:
+            # Train with regular univariable Linear Regression
+            self.stage3_ = self._make_model(
+                alpha=None, l1_ratio=None, model_type="regular"
+            )
+        else:
+            ## Train with elastic net
+            self.stage3_ = self._make_model(
+                alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type="elastic"
+            )
+        try:
+            self.stage3_.fit(X3, resid2)
+        except ValueError:
+            print(X3)
         self.pred3_train_ = self.stage3_.predict(X3)
         return self
 
@@ -167,6 +196,7 @@ def get_lr_output(
     selected_l1s,
     split_id,
     impact_type,
+    impactme_outcome,
     export_path,
     max_iter,
     seed,
@@ -195,6 +225,7 @@ def get_lr_output(
         l1_ratio3=selected_l1s[1],
         max_iter=max_iter,
         seed=seed,
+        impactme_outcome=impactme_outcome,
     )
 
     model.fit(train_reset, y_train)

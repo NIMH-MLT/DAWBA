@@ -10,6 +10,8 @@ notebooks/0_shot_experiment.ipynb
 # Results
 initial_results*/
 initial_preds*/
+outcome_analysis/
+
 
 ## Extras
 src/__pycache__
