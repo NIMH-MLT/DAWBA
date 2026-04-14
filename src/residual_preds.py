@@ -45,6 +45,8 @@ def check_ratios(df_w_splits, pred_type, n_splits, tol=0.1, verbose=0):
             )
         val_counts = sub_df["eligible_group"].value_counts(normalize=True)
         for group in ratio_list_dict.keys():
+            if group not in val_counts.keys():
+                raise ValueError(f"No instance of {group} in split: {split}")
             ratio_list_dict[group].append(val_counts[group])
     ## Check ratios are ~=
     for group, group_list in ratio_list_dict.items():
