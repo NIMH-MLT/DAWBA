@@ -1,24 +1,18 @@
-## elastic_func.py
+## residual_func.py
 from .config import SEED
 from src.utils import (
     col_config_sensitivity,
     IMPACTME_OUTCOMES_SHOT,
     IMPACTME_OUTCOMES_LR,
 )
-from sklearn.linear_model import ElasticNet
 import pandas as pd
 import numpy as np
-
-import numpy as np
-import pandas as pd
 
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.linear_model import ElasticNet, LinearRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import ElasticNet, LinearRegression, Ridge
 
 
-class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
+class ResidualRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         quest_cols,
@@ -30,6 +24,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         l1_ratio3,
         seed,
         impactme_outcome,
+        linear_type,
         max_iter=5000,
     ):
         if num_layers not in [2, 3]:
@@ -43,6 +38,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         self.l1_ratio3 = l1_ratio3
         self.max_iter = max_iter
         self.seed = seed
+        self.linear_type = linear_type
         self.impactme_outcome = impactme_outcome
 
     def _get_prob_col(self):
@@ -81,6 +77,10 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         return quest_sum, quest_np, prob_vec
 
     def _make_model(self, alpha, l1_ratio, model_type):
+        """
+        model_type: str
+            One of ['elastic', 'regular', 'ridge']
+        """
         if model_type == "elastic":
             return ElasticNet(
                 alpha=alpha,
@@ -89,12 +89,18 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
                 max_iter=self.max_iter,
                 random_state=self.seed,
             )
-
+        elif model_type == "ridge":
+            return Ridge(
+                alpha=alpha,
+                fit_intercept=True,
+                random_state=self.seed,
+                max_iter=self.max_iter,
+            )
         elif model_type == "regular":
             return LinearRegression()
         else:
             raise ValueError(
-                f"Unrecognized model_type. Expected one of ['elastic', 'regular']. Got {model_type}"
+                f"Unrecognized model_type. Expected one of ['elastic', 'regular', 'ridge']. Got {model_type}"
             )
 
     def fit(self, X, y):
@@ -115,7 +121,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
             """
             ## Layer 2
             self.stage2_ = self._make_model(
-                alpha=self.alpha2, l1_ratio=self.l1_ratio2, model_type="elastic"
+                alpha=self.alpha2, l1_ratio=self.l1_ratio2, model_type=self.linear_type
             )
             self.stage2_.fit(X2, resid1)
             self.pred2_train_ = self.stage2_.predict(X2)
@@ -141,7 +147,7 @@ class ResidualElasticNetRegressor(BaseEstimator, RegressorMixin):
         else:
             ## Train with elastic net
             self.stage3_ = self._make_model(
-                alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type="elastic"
+                alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type=self.linear_type
             )
         try:
             self.stage3_.fit(X3, resid2)
@@ -200,6 +206,7 @@ def get_lr_output(
     export_path,
     max_iter,
     seed,
+    linear_type,  # elastic or ridge
 ):
     quest_cols = col_config_sensitivity[f"{impact_type.lower()}_quest"]
     # ================> Get X_train, y_train, X_test, y_test
@@ -215,7 +222,7 @@ def get_lr_output(
     y_test = test_reset[f"impact_score_{impact_type}"]
 
     ## ============> Modeling
-    model = ResidualElasticNetRegressor(
+    model = ResidualRegressor(
         quest_cols=quest_cols,
         agg_type=agg_type,
         num_layers=num_layers,
@@ -226,6 +233,7 @@ def get_lr_output(
         max_iter=max_iter,
         seed=seed,
         impactme_outcome=impactme_outcome,
+        linear_type=linear_type,
     )
 
     model.fit(train_reset, y_train)

@@ -57,6 +57,8 @@ def create_cmd_str(
     n_threads,
     tune_flag_str,
     n_layers,
+    metric_agg,
+    linear_type,
     alpha_list=None,
     l1_list=None,
     impactme_outcomes=None,
@@ -77,7 +79,7 @@ def create_cmd_str(
     )
     cmd_str = f"export PYTHONPATH={BASE_PATH}; \
 			export OMP_NUM_THREADS={n_threads}; \
-			uv run python -m src.elastic_preds \
+			uv run python -m src.residual_preds \
 			--impact_type {impact_type} \
 			--agg_type {agg_type}\
 			--df_path {df_path}\
@@ -86,13 +88,15 @@ def create_cmd_str(
             --impactme_outcome {impactme_outcome_str}\
             --alpha_list {alpha_list_str}\
             --l1_list {l1_list_str}\
+            --linear_type {linear_type}\
 			--seed {seed}\
 			--n_repeats {n_repeats}\
 			--split_tol {split_tol}\
 			--n_splits {N_SPLITS}\
 			--n_jobs {n_jobs}\
 			--max_iter {max_iter}\
-            --tune {tune_flag_str}"
+            --tune {tune_flag_str}\
+            --metric_agg {metric_agg}"
     return " ".join(cmd_str.split())
 
 
@@ -106,6 +110,8 @@ def make_full_lr(
     n_threads,
     tune_flag_str,
     n_layers,
+    linear_type,
+    metric_agg,
     alpha_list=None,
     l1_list=None,
     impactme_outcomes=None,
@@ -138,6 +144,8 @@ def make_full_lr(
             alpha_list=alpha_list,
             l1_list=l1_list,
             impactme_outcomes=impactme_outcomes,
+            linear_type=linear_type,
+            metric_agg=metric_agg,
         )
         cmd_list.append(cmd_str)
     return cmd_list
@@ -152,6 +160,8 @@ def make_full_shot(
     pred_type,
     tune_flag_str,
     n_layers,
+    linear_type,
+    metric_agg,
     impactme_outcomes=None,
     alpha_list=None,
     l1_list=None,
@@ -192,5 +202,7 @@ def make_full_shot(
         alpha_list=alpha_list,
         l1_list=l1_list,
         impactme_outcomes=impactme_outcomes,
+        linear_type=linear_type,
+        metric_agg=metric_agg,
     )
     return cmd_str
