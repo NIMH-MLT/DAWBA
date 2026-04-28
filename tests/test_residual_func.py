@@ -7,7 +7,7 @@ import pandas as pd
 from sklearn.linear_model import ElasticNet, Ridge, LinearRegression
 
 from src.residual_func import ResidualRegressor, get_lr_output
-from .conftest import QUEST_COLS
+from .conftest import QUEST_COLS, N_OUTCOMES_LR
 
 
 def make_regressor(**overrides):
@@ -237,6 +237,7 @@ class TestGetLrOutput:
             max_iter=100,
             seed=SEED,
             linear_type="elastic",
+            perm_dir=None,
         )
         assert export_path.exists()
 
@@ -255,6 +256,7 @@ class TestGetLrOutput:
             max_iter=100,
             seed=0,
             linear_type="elastic",
+            perm_dir=None,
         )
         df_out = pd.read_parquet(export_path)
         expected = {
@@ -285,6 +287,144 @@ class TestGetLrOutput:
             max_iter=100,
             seed=0,
             linear_type="elastic",
+            perm_dir=None,
         )
         df_out = pd.read_parquet(export_path)
         assert len(df_out) == expected_rows
+
+
+class TestShuffleVals:
+    """Test shuffle_vals in ResidualRegressor."""
+
+    def _write_perm_seed(self, perm_dir, seed):
+        perm_dir.mkdir(parents=True, exist_ok=True)
+        (perm_dir / "seed.txt").write_text(str(seed))
+
+    def _make_prob_array(self, df):
+        """2D array aligned to df rows."""
+        return np.random.rand(len(df), N_OUTCOMES_LR)
+
+    def test_raises_if_no_seed_file(self, base_df, tmp_path):
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+        with pytest.raises(ValueError, match="No seed file"):
+            r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+
+    def test_output_shape_preserved(self, base_df, tmp_path):
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+        result = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+        assert result.shape == X3.shape
+
+    def test_rows_are_permuted(self, base_df, tmp_path):
+        """Output rows should be a reordering of input rows, not identical."""
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+        result = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+        assert not np.array_equal(result, X3)
+
+    def test_values_conserved(self, base_df, tmp_path):
+        """Every row in the output should exist somewhere in the input."""
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+        result = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+        # Sort rows for comparison — order doesn't matter, content does
+        orig_sorted = np.sort(X3, axis=0)
+        result_sorted = np.sort(result, axis=0)
+        np.testing.assert_array_almost_equal(orig_sorted, result_sorted)
+
+    def test_reproducible_with_same_seed(self, base_df, tmp_path):
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+        r1 = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+        r2 = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_different_seeds_give_different_results(self, base_df, tmp_path):
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+        results = []
+        for i, seed in enumerate([SEED, SEED + 1, SEED + 2]):
+            perm_dir = tmp_path / f"perm_{i}"
+            self._write_perm_seed(perm_dir, seed)
+            results.append(
+                r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=perm_dir)
+            )
+        # No two results from different seeds should be identical
+        for i, j in [(0, 1), (0, 2), (1, 2)]:
+            assert not np.array_equal(results[i], results[j])
+
+    def test_id_based_not_positional(self, base_df, tmp_path):
+        """Shuffling a reordered DataFrame should give the same assignment."""
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+
+        # Shuffle the DataFrame rows and realign X3 accordingly
+        df_reordered = base_df.sample(frac=1, random_state=SEED).reset_index(drop=True)
+        id_order = df_reordered["DAWBA_ID"].values
+        orig_order = base_df["DAWBA_ID"].values
+        reorder_idx = [np.where(orig_order == i)[0][0] for i in id_order]
+        X3_reordered = X3[reorder_idx]
+
+        result_orig = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+        result_reordered = r.shuffle_vals(
+            X=df_reordered, col_to_shuffle_np=X3_reordered, perm_dir=tmp_path
+        )
+
+        np.testing.assert_array_equal(result_orig, result_reordered)
+
+    def test_shuffle_within_groups(self, base_df, tmp_path):
+        """Subjects should only receive prob vectors from within their own eligible_group."""
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+
+        result = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+
+        # Build a lookup from row content to eligible_group
+        # For each row in result, find which subject it came from and check groups match
+        for i, row in enumerate(result):
+            orig_subject_group = base_df.iloc[i]["eligible_group"]
+            # Find which original row this result row came from
+            matches = [
+                j for j, orig_row in enumerate(X3) if np.array_equal(orig_row, row)
+            ]
+            assert len(matches) == 1, "Row should match exactly one original row"
+            source_group = base_df.iloc[matches[0]]["eligible_group"]
+            assert (
+                orig_subject_group == source_group
+            ), f"Subject in group {orig_subject_group} received a vector from group {source_group}"
+
+    def test_input_not_mutated(self, base_df, tmp_path):
+        """shuffle_vals should not alter the input DataFrame or array."""
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+
+        df_copy = base_df.copy()
+        X3_copy = X3.copy()
+
+        r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+
+        pd.testing.assert_frame_equal(base_df, df_copy)
+        np.testing.assert_array_equal(X3, X3_copy)
+
+    def test_all_subjects_assigned(self, base_df, tmp_path):
+        """Every subject should receive exactly one prob vector — no subject is skipped or duplicated."""
+        self._write_perm_seed(tmp_path, SEED)
+        r = make_regressor()
+        X3 = self._make_prob_array(base_df)
+
+        result = r.shuffle_vals(X=base_df, col_to_shuffle_np=X3, perm_dir=tmp_path)
+
+        assert result.shape[0] == len(base_df), "Output has wrong number of rows"
+        # Each row in result should be unique (no subject received the same vector twice)
+        unique_rows = {tuple(row) for row in result}
+        assert len(unique_rows) == len(
+            base_df
+        ), "Duplicate rows found — some subjects got the same vector"

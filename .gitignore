@@ -19,3 +19,9 @@ logs/
 block/
 swarm_dir/
 */__pycache__/
+linear_preds/
+preds/
+old_preds/
+sig_tests/
+sig_tests_reverse/
+perm_res/

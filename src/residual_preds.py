@@ -67,6 +67,8 @@ def loop_through_l1(
     n_splits,
     num_layers,
     linear_type,
+    perm_dir,
+    shuffle=None,
     impactme_outcome=None,
     alpha_list=ALPHA_LIST,
     l1_list=L1_LIST,
@@ -106,9 +108,14 @@ def loop_through_l1(
                 seed=seed,
                 agg_type=agg_type,
                 linear_type=linear_type,
+                perm_dir=perm_dir,
+                hypothesis_shuffle=shuffle,
             )
         )
 
+    # df_perm = permute_target(
+    #     perm_dir=perm_dir, impact_type=impact_type, df_to_permute=df
+    # )
     for repeat in range(n_repeats):
         random_state_for_split = seed + repeat
         df_w_splits = add_split_col(
@@ -119,7 +126,6 @@ def loop_through_l1(
             n_splits=n_splits,
             verbose=verbose,
         )
-
         for split_id in range(n_splits):
             if impactme_outcome is not None:
                 # ImpactMe outcome iteration
@@ -180,15 +186,13 @@ def loop_through_l1(
                                 df_w_splits,
                                 split_id,
                             )
-
             else:
                 # Regular iteration
-                if num_layers == 2:
+                if num_layers in [1, 2]:
                     # L3 is elastic/ridge
                     for alpha_3 in alpha_list:
                         selected_alphas = [None, alpha_3]
                         if linear_type == "elastic":
-                            print("\t RUNNING ELASTIC w/ 2 layers")
                             for l1_ratio_3 in l1_values:
                                 selected_l1s = [None, l1_ratio_3]
                                 export_path = (
@@ -206,7 +210,6 @@ def loop_through_l1(
                                     split_id,
                                 )
                         else:
-                            print("\t RUNNING RIDGE w/ 2 layers")
                             selected_l1s = [None, None]
                             export_path = (
                                 base_save_dir
@@ -221,13 +224,11 @@ def loop_through_l1(
                                 df_w_splits,
                                 split_id,
                             )
-
                 else:
                     # num_layers == 3
                     for alpha_2, alpha_3 in product(alpha_list, alpha_list):
                         selected_alphas = [alpha_2, alpha_3]
                         if linear_type == "elastic":
-                            print("\t RUNNING ELASTIC w/ 3 layers")
                             for l1_ratio_2, l1_ratio_3 in product(l1_values, l1_values):
                                 selected_l1s = [l1_ratio_2, l1_ratio_3]
 
@@ -246,7 +247,6 @@ def loop_through_l1(
                                     split_id,
                                 )
                         else:
-                            print("\t RUNNING RIDGE w/ 3 layers")
                             selected_l1s = [None, None]
 
                             export_path = (
@@ -435,7 +435,7 @@ def get_r2_by_outcome(pred_dir, outcomes, nlayers, metric_agg):
                     r2_1_list.append(r2_1)
                     r2_3_list.append(r2_3)
                     mse_list.append(mse)
-            else:  # combined
+            elif metric_agg == "combined":  # combined
                 df_list = []
                 for split_file in repeat_dir.iterdir():
                     df_import = pd.read_parquet(split_file)
@@ -457,6 +457,8 @@ def get_r2_by_outcome(pred_dir, outcomes, nlayers, metric_agg):
                 r2_1_list.append(r2_1)
                 r2_3_list.append(r2_3)
                 mse_list.append(mse)
+            else:
+                raise ValueError(f"Unrecognized metric_agg param: {metric_agg}")
 
         avg_mse = np.mean(mse_list)
 
@@ -499,7 +501,9 @@ def build_parser():
     parser.add_argument("--base_save_dir", required=True)
     parser.add_argument("--alpha_list", required=False, nargs="+", default=ALPHA_LIST)
     parser.add_argument("--l1_list", required=False, nargs="+", default=L1_LIST)
+    parser.add_argument("--perm_dir", required=True)
     parser.add_argument("--linear_type", required=True, choices=["elastic", "ridge"])
+    parser.add_argument("--shuffle", required=True, choices=["text", "none"])
     parser.add_argument(
         "--metric_agg", required=True, choices=["per_fold", "combined_folds"]
     )
@@ -535,7 +539,7 @@ def build_parser():
         default=3,
     )
     parser.add_argument(
-        "--num_layers", required=False, type=int, default=3, choices=[2, 3]
+        "--num_layers", required=False, type=int, default=3, choices=[1, 2, 3]
     )
     parser.add_argument(
         "--n_jobs",
@@ -564,6 +568,7 @@ def build_parser():
 def main(argv=None):
     ## Parse args
     args = build_parser().parse_args(argv)
+    perm_dir = Path(args.perm_dir)
     alpha_list = (
         None if args.alpha_list == ["None"] else [float(a) for a in args.alpha_list]
     )
@@ -573,7 +578,11 @@ def main(argv=None):
     )
     ## Brute force preds
     save_dir = Path(args.base_save_dir)
-
+    ## Perm shuffle str
+    if args.shuffle == "none":
+        shuffle = None
+    else:
+        shuffle = args.shuffle
     if impactme_outcome_list is None:
         # This runs to get raw preds on each param combo
         loop_through_l1(
@@ -584,6 +593,7 @@ def main(argv=None):
             num_layers=args.num_layers,
             alpha_list=alpha_list,
             l1_list=l1_list,
+            perm_dir=perm_dir,
             linear_type=args.linear_type,
             impactme_outcome=None,
             max_iter=args.max_iter,
@@ -592,6 +602,7 @@ def main(argv=None):
             split_tol=args.split_tol,
             n_splits=args.n_splits,
             n_jobs=args.n_jobs,
+            shuffle=shuffle,
         )
     else:
         print(
@@ -607,6 +618,7 @@ def main(argv=None):
                 num_layers=args.num_layers,
                 alpha_list=alpha_list,
                 l1_list=l1_list,
+                perm_dir=perm_dir,
                 impactme_outcome=outcome_name,
                 linear_type=args.linear_type,
                 max_iter=args.max_iter,
@@ -615,7 +627,9 @@ def main(argv=None):
                 split_tol=args.split_tol,
                 n_splits=args.n_splits,
                 n_jobs=args.n_jobs,
+                shuffle=shuffle,
             )
+    ## TODO: how to reconcile this w/ perms?
     if args.tune == "True":
         relative_save_dir = save_dir.relative_to(BASE_PATH)
         if impactme_outcome_list is None:

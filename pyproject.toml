@@ -17,6 +17,7 @@ dependencies = [
     "pytest>=9.0.3",
     "scikit-learn==1.7.2",
     "seaborn>=0.13.2",
+    "statsmodels>=0.14.6",
     "torch>=2.8.0",
     "transformers>=4.56.2",
 ]

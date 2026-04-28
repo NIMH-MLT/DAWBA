@@ -10,14 +10,14 @@ import numpy as np
 
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import ElasticNet, LinearRegression, Ridge
+from src.perm import create_perms
 
 
-class ResidualRegressor(BaseEstimator, RegressorMixin):
+class BaseRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         quest_cols,
         agg_type,
-        num_layers,
         alpha2,
         l1_ratio2,
         alpha3,
@@ -27,11 +27,8 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
         linear_type,
         max_iter=5000,
     ):
-        if num_layers not in [2, 3]:
-            raise ValueError(f"Num layers must be one of [2,3]. Got {num_layers}")
         self.quest_cols = quest_cols
         self.agg_type = agg_type
-        self.num_layers = num_layers
         self.alpha2 = alpha2
         self.l1_ratio2 = l1_ratio2
         self.alpha3 = alpha3
@@ -40,6 +37,7 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
         self.seed = seed
         self.linear_type = linear_type
         self.impactme_outcome = impactme_outcome
+        self.perm_ids = None
 
     def _get_prob_col(self):
         if self.agg_type in ["avg", "max", "block"]:
@@ -103,12 +101,129 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
                 f"Unrecognized model_type. Expected one of ['elastic', 'regular', 'ridge']. Got {model_type}"
             )
 
-    def fit(self, X, y):
+    def shuffle_vals(self, X, col_to_shuffle_np, perm_dir):
+        ## Get permutation seed
+        perm_seed_path = perm_dir / f"seed.txt"
+        if not perm_seed_path.exists():
+            raise ValueError(
+                f"No seed file exists at path {perm_seed_path}, but prompted to permute. Aborting..."
+            )
+        with open(perm_seed_path, "r") as f:
+            perm_seed = int(f.read().strip())
+        print(f"PERMUTING with seed: {perm_seed}")
+        # Sort by DAWBA_ID to ensure canonical order regardless of input row order
+        sort_idx = np.argsort(X["DAWBA_ID"].values)
+        X_sorted = X.iloc[sort_idx].reset_index(drop=True)
+        col_sorted = col_to_shuffle_np[sort_idx]
+        ### Shuffle DAWBA_ID col
+        self.perm_ids = create_perms(perm_seed=perm_seed, df_to_permute=X_sorted)
+        # Attatch og DAWBA IDs to col_to_shuffle
+        df_w_ids = pd.DataFrame(col_sorted, index=X_sorted["DAWBA_ID"].values)
+        # Reindex by permuted IDs
+        shuffled = df_w_ids.reindex(self.perm_ids)
+        return shuffled.to_numpy()
+
+    def predict(self, X):
+        """
+        sklearn-compatible predict: returns final cumulative prediction only.
+        """
+        pred_df = self.predict_all(X)
+        return pred_df["pred_stage3_total"].to_numpy()
+
+
+class IndependentRegressor(BaseRegressor):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def fit(self, X, y, shuffle=None, perm_dir=None):
+        # TODO: Implement impactme outcome functionality in 1 layer
+        """
+        No longer residual-- predict raw impact with each of X1, X2, X3
+
+        Layer1--> Use sum scores to predict raw impact
+        Layer2--> Use questionnaire responses to predict raw impact
+        Layer3--> Use text probs to predict raw impact
+
+        NOTE: Uses l1_ratio/alpha 3 for both questionnaire and text models
+        """
         y = np.asarray(y, dtype=float)
-
         X1, X2, X3 = self._build_X_blocks(X)
+        # TODO: Implement shuffling for Sum & Questionnaire layers as well
+        if shuffle == "text":
+            # shuffle text layer inputs (ONLY IN TRAIN)
+            X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
+        elif shuffle is None:
+            self.perm_ids = X["DAWBA_ID"].values
+        else:
+            raise ValueError(
+                f"Unrecognized `shuffle` in fit method: {shuffle}. Must be one of ['text', None]"
+            )
 
-        ## Layer 1
+        # Sum scores
+        self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
+        self.stage1_.fit(X1, y)
+        self.pred1_train_ = self.stage1_.predict(X1)
+        # Questionnaire responses
+        self.stage2_ = self._make_model(
+            alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type=self.linear_type
+        )
+        self.stage2_.fit(X2, y)
+        self.pred2_train_ = self.stage2_.predict(X2)
+        # Text responses
+        self.stage3_ = self._make_model(
+            alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type=self.linear_type
+        )
+        self.stage3_.fit(X3, y)
+        self.pred3_train_ = self.stage3_.predict(X3)
+        return self
+
+    def predict_all(self, X):
+        """
+        Predict with each model independently
+        """
+        X1, X2, X3 = self._build_X_blocks(X)
+        pred1 = self.stage1_.predict(X1)
+        pred2 = self.stage2_.predict(X2)
+        pred3 = self.stage3_.predict(X3)
+        out = pd.DataFrame(
+            {
+                "pred_stage1": pred1,
+                "pred_stage2_total": pred2,
+                "pred_stage3_total": pred3,
+            }
+        )
+        return out
+
+
+class ResidualRegressor(BaseRegressor):
+    def __init__(
+        self,
+        num_layers,
+        **kwargs,
+    ):
+        if num_layers not in [2, 3]:
+            raise ValueError(f"Num layers must be one of [2,3]. Got {num_layers}")
+        super().__init__(**kwargs)
+        self.num_layers = num_layers
+
+    def fit(self, X, y, shuffle=None, perm_dir=None):
+        """
+        Use residual method
+        Layer1--> Use sum scores to predict raw impact
+        """
+        y = np.asarray(y, dtype=float)
+        X1, X2, X3 = self._build_X_blocks(X)
+        if shuffle == "text":
+            # shuffle text layer inputs (ONLY IN TRAIN)
+            X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
+        elif shuffle is None:
+            self.perm_ids = X["DAWBA_ID"].values
+        else:
+            raise ValueError(
+                f"Unrecognized `shuffle` in fit method: {shuffle}. Must be one of ['text', None]"
+            )
+
+        ## Layer 1- Sum scores
         self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
         self.stage1_.fit(X1, y)
         self.pred1_train_ = self.stage1_.predict(X1)
@@ -121,7 +236,9 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
             """
             ## Layer 2
             self.stage2_ = self._make_model(
-                alpha=self.alpha2, l1_ratio=self.l1_ratio2, model_type=self.linear_type
+                alpha=self.alpha2,
+                l1_ratio=self.l1_ratio2,
+                model_type=self.linear_type,
             )
             self.stage2_.fit(X2, resid1)
             self.pred2_train_ = self.stage2_.predict(X2)
@@ -147,7 +264,9 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
         else:
             ## Train with elastic net
             self.stage3_ = self._make_model(
-                alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type=self.linear_type
+                alpha=self.alpha3,
+                l1_ratio=self.l1_ratio3,
+                model_type=self.linear_type,
             )
         try:
             self.stage3_.fit(X3, resid2)
@@ -156,13 +275,6 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
         self.pred3_train_ = self.stage3_.predict(X3)
         return self
 
-    def predict(self, X):
-        """
-        sklearn-compatible predict: returns final cumulative prediction only.
-        """
-        pred_df = self.predict_all(X)
-        return pred_df["pred_stage3_total"].to_numpy()
-
     def predict_all(self, X):
         """
         Returns all stage predictions and cumulative totals in a DataFrame.
@@ -170,15 +282,16 @@ class ResidualRegressor(BaseEstimator, RegressorMixin):
         X1, X2, X3 = self._build_X_blocks(X)
 
         pred1 = self.stage1_.predict(X1)
-
-        ## If 3 layers, use layer2 preds
         if self.num_layers == 3:
+            ## If 3 layers, use layer2 preds
             pred2 = self.stage2_.predict(X2)
-        ## If 2 layers, skip preds from layer2
-        else:  # num layers = 2
-            pred2 = np.zeros(len(pred1))
-        pred2_total = pred1 + pred2
 
+        else:  # num layers = 2
+            ## If 2 layers, skip preds from layer2
+            pred2 = np.zeros(len(pred1))
+
+        # Use layer 3 to predict layer 2 residuals
+        pred2_total = pred1 + pred2
         pred3 = self.stage3_.predict(X3)
         pred3_total = pred2_total + pred3
 
@@ -207,6 +320,8 @@ def get_lr_output(
     max_iter,
     seed,
     linear_type,  # elastic or ridge
+    perm_dir,
+    hypothesis_shuffle=None,  # None, 'text'. ' or 'resid1'
 ):
     quest_cols = col_config_sensitivity[f"{impact_type.lower()}_quest"]
     # ================> Get X_train, y_train, X_test, y_test
@@ -222,10 +337,9 @@ def get_lr_output(
     y_test = test_reset[f"impact_score_{impact_type}"]
 
     ## ============> Modeling
-    model = ResidualRegressor(
+    shared_args = dict(
         quest_cols=quest_cols,
         agg_type=agg_type,
-        num_layers=num_layers,
         alpha2=selected_alphas[0],
         l1_ratio2=selected_l1s[0],
         alpha3=selected_alphas[1],
@@ -235,25 +349,45 @@ def get_lr_output(
         impactme_outcome=impactme_outcome,
         linear_type=linear_type,
     )
+    if num_layers == 1:
+        model = IndependentRegressor(**shared_args)
+    else:
+        model = ResidualRegressor(num_layers=num_layers, **shared_args)
 
-    model.fit(train_reset, y_train)
+    model.fit(train_reset, y_train, shuffle=hypothesis_shuffle, perm_dir=perm_dir)
 
     pred_df = model.predict_all(test_reset)
 
-    ## ===========> Create df
-    output_df = pd.DataFrame(
-        {
-            "DAWBA_ID": test_set["DAWBA_ID"].values,
-            "true": y_test.values,
-            "pred_stage1": pred_df["pred_stage1"].values,
-            "pred_stage2_increment": pred_df["pred_stage2_increment"].values,
-            "pred_stage2_total": pred_df["pred_stage2_total"].values,
-            "pred_stage3_increment": pred_df["pred_stage3_increment"].values,
-            "pred_stage3_total": pred_df["pred_stage3_total"].values,
-        }
+    ## ===========> Create dfs
+    perm_id_df = pd.DataFrame(
+        {"perm_id_train": model.perm_ids}, index=list(range(len(model.perm_ids)))
     )
+    if num_layers == 1:
+        output_df = pd.DataFrame(
+            {
+                "DAWBA_ID": test_set["DAWBA_ID"].values,
+                "true": y_test.values,
+                "pred_stage1": pred_df["pred_stage1"].values,
+                "pred_stage2_total": pred_df["pred_stage2_total"].values,
+                "pred_stage3_total": pred_df["pred_stage3_total"].values,
+            }
+        )
+    else:
+        output_df = pd.DataFrame(
+            {
+                "DAWBA_ID": test_set["DAWBA_ID"].values,
+                "true": y_test.values,
+                "pred_stage1": pred_df["pred_stage1"].values,
+                "pred_stage2_increment": pred_df["pred_stage2_increment"].values,
+                "pred_stage2_total": pred_df["pred_stage2_total"].values,
+                "pred_stage3_increment": pred_df["pred_stage3_increment"].values,
+                "pred_stage3_total": pred_df["pred_stage3_total"].values,
+            }
+        )
     ## Export
     if export_path.exists():
         export_path.unlink()
     export_path.parent.mkdir(exist_ok=True, parents=True)
     output_df.to_parquet(export_path)
+    perm_id_df.to_parquet(export_path.with_stem(f"{export_path.stem}_perm_ids"))
+    assert export_path.exists()
