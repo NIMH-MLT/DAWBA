@@ -58,6 +58,24 @@ def check_ratios(df_w_splits, pred_type, n_splits, tol=0.1, verbose=0):
         print(f"\tSplits are all good!")
 
 
+def export_dfs(combined_output_df, combined_perm_ids, save_dir):
+    """
+    Export dfs at specified dir. If file already exists, skip without error.
+    """
+    save_dir.mkdir(exist_ok=True, parents=True)
+    pred_path = save_dir / "output_preds.parquet"
+    id_path = save_dir / "perm_ids.parquet"
+
+    if pred_path.exists():
+        print(f"skipping export OUTPUT PRED: already exists at {pred_path}")
+    else:
+        combined_output_df.to_parquet(pred_path)
+    if id_path.exists():
+        print(f"skipping export PERM ID: already exists at {id_path}")
+    else:
+        combined_perm_ids.to_parquet(id_path)
+
+
 def loop_through_l1(
     *_,
     impact_type,
@@ -93,9 +111,11 @@ def loop_through_l1(
     # Ridge never sweeps l1_ratio.
     l1_values = l1_list if linear_type == "elastic" else [None]
 
-    def add_job(selected_alphas, selected_l1s, export_path, df_w_splits, split_id):
-        joblist.append(
-            delayed(get_lr_output)(
+    def loop_through_splits(selected_alphas, selected_l1s, df_w_splits):
+        perm_id_list = []
+        output_df_list = []
+        for split_id in range(n_splits):
+            perm_id_df, output_df = get_lr_output(
                 df=df_w_splits,
                 num_layers=num_layers,
                 selected_alphas=selected_alphas,
@@ -103,7 +123,6 @@ def loop_through_l1(
                 split_id=split_id,
                 impact_type=impact_type,
                 impactme_outcome=impactme_outcome,
-                export_path=export_path,
                 max_iter=max_iter,
                 seed=seed,
                 agg_type=agg_type,
@@ -111,11 +130,15 @@ def loop_through_l1(
                 perm_dir=perm_dir,
                 hypothesis_shuffle=shuffle,
             )
-        )
+            perm_id_list.append(perm_id_df)
+            output_df_list.append(output_df)
+        ## Agg
+        combined_perm_ids = pd.concat(perm_id_list, axis=1)
+        combined_output_df = pd.concat(output_df_list, axis=0)
+        assert combined_perm_ids.shape[1] == 3
+        assert combined_output_df["DAWBA_ID"].nunique() == len(combined_output_df)
+        return combined_perm_ids, combined_output_df
 
-    # df_perm = permute_target(
-    #     perm_dir=perm_dir, impact_type=impact_type, df_to_permute=df
-    # )
     for repeat in range(n_repeats):
         random_state_for_split = seed + repeat
         df_w_splits = add_split_col(
@@ -126,144 +149,82 @@ def loop_through_l1(
             n_splits=n_splits,
             verbose=verbose,
         )
-        for split_id in range(n_splits):
-            if impactme_outcome is not None:
-                # ImpactMe outcome iteration
-                if num_layers == 2:
-                    # No alpha/l1 sweep here
-                    selected_alphas = [None, None]
+        if impactme_outcome is not None:
+            # ImpactMe outcome iteration
+            if num_layers == 2:
+                # No alpha/l1 sweep here
+                selected_alphas = [None, None]
+                selected_l1s = [None, None]
+                export_dir = (
+                    base_save_dir
+                    / impactme_outcome
+                    / f"repeat_{repeat}"
+                    # / f"split_{split_id}.parquet"
+                )
+                combined_perm_ids, combined_output_df = loop_through_splits(
+                    selected_alphas,
+                    selected_l1s,
+                    df_w_splits,
+                    # split_id,
+                )
+            else:
+                # num_layers == 3
+                for alpha_2 in alpha_list:
+                    selected_alphas = [alpha_2, None]
                     selected_l1s = [None, None]
-                    export_path = (
+                    export_dir = (
                         base_save_dir
                         / impactme_outcome
+                        / f"alpha_{alpha_2}"
                         / f"repeat_{repeat}"
-                        / f"split_{split_id}.parquet"
+                        # / f"split_{split_id}.parquet"
                     )
-
-                    add_job(
+                    combined_perm_ids, combined_output_df = loop_through_splits(
                         selected_alphas,
                         selected_l1s,
-                        export_path,
                         df_w_splits,
-                        split_id,
+                        # split_id,
                     )
-
-                else:
-                    # num_layers == 3
-                    for alpha_2 in alpha_list:
-                        selected_alphas = [alpha_2, None]
-                        if linear_type == "elastic":
-                            for l1_ratio_2 in l1_values:
-                                selected_l1s = [l1_ratio_2, None]
-                                export_path = (
-                                    base_save_dir
-                                    / impactme_outcome
-                                    / f"alpha_{alpha_2}"
-                                    / f"l1_{l1_ratio_2}"
-                                    / f"repeat_{repeat}"
-                                    / f"split_{split_id}.parquet"
-                                )
-                                add_job(
-                                    selected_alphas,
-                                    selected_l1s,
-                                    export_path,
-                                    df_w_splits,
-                                    split_id,
-                                )
-                        else:
-                            selected_l1s = [None, None]
-                            export_path = (
-                                base_save_dir
-                                / impactme_outcome
-                                / f"alpha_{alpha_2}"
-                                / f"repeat_{repeat}"
-                                / f"split_{split_id}.parquet"
-                            )
-                            add_job(
-                                selected_alphas,
-                                selected_l1s,
-                                export_path,
-                                df_w_splits,
-                                split_id,
-                            )
+        else:
+            # Regular iteration
+            if num_layers in [1, 2]:
+                # L3 is elastic/ridge
+                for alpha_3 in alpha_list:
+                    selected_alphas = [None, alpha_3]
+                    selected_l1s = [None, None]
+                    export_dir = base_save_dir / f"alpha_{alpha_3}" / f"repeat_{repeat}"
+                    combined_perm_ids, combined_output_df = loop_through_splits(
+                        selected_alphas,
+                        selected_l1s,
+                        df_w_splits,
+                        # split_id,
+                    )
+                    export_dfs(
+                        combined_perm_ids=combined_perm_ids,
+                        combined_output_df=combined_output_df,
+                        save_dir=export_dir,
+                    )
             else:
-                # Regular iteration
-                if num_layers in [1, 2]:
-                    # L3 is elastic/ridge
-                    for alpha_3 in alpha_list:
-                        selected_alphas = [None, alpha_3]
-                        if linear_type == "elastic":
-                            for l1_ratio_3 in l1_values:
-                                selected_l1s = [None, l1_ratio_3]
-                                export_path = (
-                                    base_save_dir
-                                    / f"alpha_{alpha_3}"
-                                    / f"l1_{l1_ratio_3}"
-                                    / f"repeat_{repeat}"
-                                    / f"split_{split_id}.parquet"
-                                )
-                                add_job(
-                                    selected_alphas,
-                                    selected_l1s,
-                                    export_path,
-                                    df_w_splits,
-                                    split_id,
-                                )
-                        else:
-                            selected_l1s = [None, None]
-                            export_path = (
-                                base_save_dir
-                                / f"alpha_{alpha_3}"
-                                / f"repeat_{repeat}"
-                                / f"split_{split_id}.parquet"
-                            )
-                            add_job(
-                                selected_alphas,
-                                selected_l1s,
-                                export_path,
-                                df_w_splits,
-                                split_id,
-                            )
-                else:
-                    # num_layers == 3
-                    for alpha_2, alpha_3 in product(alpha_list, alpha_list):
-                        selected_alphas = [alpha_2, alpha_3]
-                        if linear_type == "elastic":
-                            for l1_ratio_2, l1_ratio_3 in product(l1_values, l1_values):
-                                selected_l1s = [l1_ratio_2, l1_ratio_3]
-
-                                export_path = (
-                                    base_save_dir
-                                    / f"alpha_{alpha_2}_{alpha_3}"
-                                    / f"l1_{l1_ratio_2}_{l1_ratio_3}"
-                                    / f"repeat_{repeat}"
-                                    / f"split_{split_id}.parquet"
-                                )
-                                add_job(
-                                    selected_alphas,
-                                    selected_l1s,
-                                    export_path,
-                                    df_w_splits,
-                                    split_id,
-                                )
-                        else:
-                            selected_l1s = [None, None]
-
-                            export_path = (
-                                base_save_dir
-                                / f"alpha_{alpha_2}_{alpha_3}"
-                                / f"repeat_{repeat}"
-                                / f"split_{split_id}.parquet"
-                            )
-                            add_job(
-                                selected_alphas,
-                                selected_l1s,
-                                export_path,
-                                df_w_splits,
-                                split_id,
-                            )
-
-    _ = Parallel(n_jobs=n_jobs, verbose=verbose)(joblist)
+                # num_layers == 3
+                for alpha_2, alpha_3 in product(alpha_list, alpha_list):
+                    selected_alphas = [alpha_2, alpha_3]
+                    selected_l1s = [None, None]
+                    export_dir = (
+                        base_save_dir
+                        / f"alpha_{alpha_2}_{alpha_3}"
+                        / f"repeat_{repeat}"
+                    )
+                    combined_perm_ids, combined_output_df = loop_through_splits(
+                        selected_alphas,
+                        selected_l1s,
+                        df_w_splits,
+                        # split_id,
+                    )
+                    export_dfs(
+                        combined_perm_ids=combined_perm_ids,
+                        combined_output_df=combined_output_df,
+                        save_dir=export_dir,
+                    )
     return None
 
 

@@ -316,7 +316,6 @@ def get_lr_output(
     split_id,
     impact_type,
     impactme_outcome,
-    export_path,
     max_iter,
     seed,
     linear_type,  # elastic or ridge
@@ -360,7 +359,8 @@ def get_lr_output(
 
     ## ===========> Create dfs
     perm_id_df = pd.DataFrame(
-        {"perm_id_train": model.perm_ids}, index=list(range(len(model.perm_ids)))
+        {f"perm_id_split_{split_id}": model.perm_ids},
+        index=list(range(len(model.perm_ids))),
     )
     if num_layers == 1:
         output_df = pd.DataFrame(
@@ -384,10 +384,4 @@ def get_lr_output(
                 "pred_stage3_total": pred_df["pred_stage3_total"].values,
             }
         )
-    ## Export
-    if export_path.exists():
-        export_path.unlink()
-    export_path.parent.mkdir(exist_ok=True, parents=True)
-    output_df.to_parquet(export_path)
-    perm_id_df.to_parquet(export_path.with_stem(f"{export_path.stem}_perm_ids"))
-    assert export_path.exists()
+    return perm_id_df, output_df

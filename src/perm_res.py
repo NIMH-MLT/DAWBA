@@ -14,11 +14,7 @@ def get_avg_r2s(unique_dir, search_dict):
     r2_Q_list = []
     r2_T_list = []
     for repeat in search_dict["repeats"]:
-        dfs = [
-            pd.read_parquet(unique_dir / repeat / split)
-            for split in search_dict["splits"]
-        ]
-        combined_dfs = pd.concat(dfs)
+        combined_dfs = pd.read_parquet(unique_dir / repeat / "output_preds.parquet")
         y_true = combined_dfs["true"]
         y_pred_S = combined_dfs["pred_stage1"]
         y_pred_Q = combined_dfs["pred_stage2_total"]
@@ -90,42 +86,41 @@ def get_r2s_single_iter(perm_dir, search_dict, num_layers, impact_type):
 
 def ensure_consistent(perm_dir, search_dict, num_layers, impact_type):
     for repeat in search_dict["repeats"]:
-        for split in search_dict["split_perms"]:
-            #### Want to make sure we have consistent permutations for each repeat/split WITHIN permutation/num-layers/impact-type ###
-            series_list = []
-            for agg in search_dict["agg"]:
-                for llama_model in search_dict["llama_model"]:
-                    if agg in ["max", "avg", "block"]:
-                        desc_seg_list = search_dict["seg"]
+        #### Want to make sure we have consistent permutations for each repeat/split WITHIN permutation/num-layers/impact-type ###
+        series_list = []
+        for agg in search_dict["agg"]:
+            for llama_model in search_dict["llama_model"]:
+                if agg in ["max", "avg", "block"]:
+                    desc_seg_list = search_dict["seg"]
+                else:
+                    desc_seg_list = search_dict["desc"]
+                for desc_seg in desc_seg_list:
+                    if num_layers == 2:
+                        alpha_list = search_dict["alpha"]
                     else:
-                        desc_seg_list = search_dict["desc"]
-                    for desc_seg in desc_seg_list:
-                        if num_layers == 2:
-                            alpha_list = search_dict["alpha"]
-                        else:
-                            alpha_list = [
-                                f"{alpha2}_{alpha3}"
-                                for alpha2, alpha3 in product(
-                                    search_dict["alpha"], search_dict["alpha"]
-                                )
-                            ]
-                        for alpha in alpha_list:
-                            ### At this point, all unique vals
-                            imp_path = (
-                                perm_dir
-                                / f"{num_layers}_layers"
-                                / "ridge"
-                                / agg
-                                / impact_type
-                                / llama_model
-                                / desc_seg
-                                / f"alpha_{alpha}"
-                                / repeat
-                                / split
+                        alpha_list = [
+                            f"{alpha2}_{alpha3}"
+                            for alpha2, alpha3 in product(
+                                search_dict["alpha"], search_dict["alpha"]
                             )
-                            perm_df = pd.read_parquet(imp_path)
-                            perm_ids = perm_df["perm_id_train"]
-                            series_list.append(perm_ids)
+                        ]
+                    for alpha in alpha_list:
+                        ### At this point, all unique vals
+                        imp_path = (
+                            perm_dir
+                            / f"{num_layers}_layers"
+                            / "ridge"
+                            / agg
+                            / impact_type
+                            / llama_model
+                            / desc_seg
+                            / f"alpha_{alpha}"
+                            / repeat
+                            / "perm_ids.parquet"
+                        )
+                        perm_df = pd.read_parquet(imp_path)
+                        # perm_ids = perm_df["perm_id_train"]
+                        series_list.append(perm_df)
             all_identical = all(series_list[0].equals(s) for s in series_list)
             if not all_identical:
                 print(series_list)
