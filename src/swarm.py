@@ -2,6 +2,8 @@
 import subprocess
 from pathlib import Path
 from src.config import BASE_PATH, SEED
+import shlex
+import json
 
 
 ####################################################
@@ -11,6 +13,19 @@ def get_len_swarm(swarm_path):
     with open(swarm_path, "r") as f:
         line_count = sum(1 for line in f)
     return min(line_count, 20)
+
+
+def run_perm_swarm(swarm_log_dir, cmd_dir, scratch_gb=10, n_batch=1):
+    for impact_swarm_path in cmd_dir.iterdir():
+        impact_name = impact_swarm_path.stem
+        log_dir = swarm_log_dir / impact_name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        swarm_time = "0:30:00"
+        gb = 2
+        num_cpu = 8
+        swarm_cmd = f"swarm --time={swarm_time} --gres=lscratch:{scratch_gb} -g {gb} -t {num_cpu} --logdir={log_dir}  --job-name={impact_name}_preds_perm --partition=quick -b {n_batch} {impact_swarm_path}"
+        print(swarm_cmd)
+        subprocess.run(swarm_cmd, shell=True)
 
 
 def run_swarms(*_, impact_list, swarm_log_dir, cmd_dir, n_jobs, n_threads, n_batch=48):
@@ -238,3 +253,26 @@ def make_full_shot(
         perm_shuffle=perm_shuffle,
     )
     return cmd_str
+
+
+def make_perm_level(
+    param_dict, config_dict, df_dir, scratch_dir, perm_dir, impact_type
+):
+    cmd_str_list = [
+        f"export PYTHONPATH={BASE_PATH};",
+        "uv run",
+        "python -m src.residual_wrapper",
+        "--param_dict",
+        shlex.quote(json.dumps(param_dict)),
+        "--config_dict",
+        shlex.quote(json.dumps(config_dict)),
+        "--df_dir",
+        str(df_dir),
+        "--scratch_dir",
+        str(scratch_dir),
+        "--perm_dir",
+        str(perm_dir),
+        "--impact_type",
+        impact_type,
+    ]
+    return " ".join(cmd_str_list)

@@ -110,7 +110,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
             )
         with open(perm_seed_path, "r") as f:
             perm_seed = int(f.read().strip())
-        print(f"PERMUTING with seed: {perm_seed}")
+        # print(f"PERMUTING with seed: {perm_seed}")
         # Sort by DAWBA_ID to ensure canonical order regardless of input row order
         sort_idx = np.argsort(X["DAWBA_ID"].values)
         X_sorted = X.iloc[sort_idx].reset_index(drop=True)

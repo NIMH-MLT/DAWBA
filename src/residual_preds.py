@@ -4,13 +4,11 @@ from .utils import L1_LIST, ALPHA_LIST
 from .residual_func import get_lr_output
 import json
 import pandas as pd
-from joblib import Parallel, delayed
 from pathlib import Path
 import argparse
 from sklearn.model_selection import StratifiedKFold
 import numpy as np
 from sklearn.metrics import mean_squared_error, r2_score
-from tqdm.auto import tqdm
 from itertools import product
 
 
@@ -76,7 +74,7 @@ def export_dfs(combined_output_df, combined_perm_ids, save_dir):
         combined_perm_ids.to_parquet(id_path)
 
 
-def loop_through_l1(
+def loop_through_resid_params(
     *_,
     impact_type,
     agg_type,
@@ -546,7 +544,7 @@ def main(argv=None):
         shuffle = args.shuffle
     if impactme_outcome_list is None:
         # This runs to get raw preds on each param combo
-        loop_through_l1(
+        loop_through_resid_params(
             impact_type=args.impact_type,
             agg_type=args.agg_type,
             df_path=Path(args.df_path),
@@ -571,7 +569,7 @@ def main(argv=None):
         )
         # This runs to get raw preds w/ each impactme outcome as sole predictor
         for outcome_name in impactme_outcome_list:
-            loop_through_l1(
+            loop_through_resid_params(
                 impact_type=args.impact_type,
                 agg_type=args.agg_type,
                 df_path=Path(args.df_path),

@@ -22,10 +22,15 @@ def make_regressor(**overrides):
         l1_ratio3=0.5,
         seed=SEED,
         impactme_outcome=None,
-        linear_type="elastic",
+        linear_type="ridge",
     )
     defaults.update(overrides)
     return ResidualRegressor(**defaults)
+
+
+def write_seed(perm_dir, seed):
+    perm_dir.mkdir(parents=True, exist_ok=True)
+    (perm_dir / "seed.txt").write_text(str(seed))
 
 
 class TestInit:
@@ -222,9 +227,8 @@ class TestFitPredict:
 
 
 class TestGetLrOutput:
-    def test_creates_parquet_at_export_path(self, base_df, tmp_path):
-        export_path = tmp_path / "out.parquet"
-        get_lr_output(
+    def test_returns_two_dataframes(self, base_df):
+        perm_id_df, output_df = get_lr_output(
             df=base_df,
             agg_type="avg",
             num_layers=3,
@@ -233,17 +237,17 @@ class TestGetLrOutput:
             split_id=0,
             impact_type="self",
             impactme_outcome=None,
-            export_path=export_path,
             max_iter=100,
             seed=SEED,
             linear_type="elastic",
             perm_dir=None,
+            hypothesis_shuffle=None,
         )
-        assert export_path.exists()
+        assert isinstance(perm_id_df, pd.DataFrame)
+        assert isinstance(output_df, pd.DataFrame)
 
-    def test_output_has_expected_columns(self, base_df, tmp_path):
-        export_path = tmp_path / "out.parquet"
-        get_lr_output(
+    def test_output_has_expected_columns(self, base_df):
+        _, output_df = get_lr_output(
             df=base_df,
             agg_type="avg",
             num_layers=3,
@@ -252,14 +256,13 @@ class TestGetLrOutput:
             split_id=0,
             impact_type="self",
             impactme_outcome=None,
-            export_path=export_path,
             max_iter=100,
-            seed=0,
+            seed=SEED,
             linear_type="elastic",
             perm_dir=None,
+            hypothesis_shuffle=None,
         )
-        df_out = pd.read_parquet(export_path)
-        expected = {
+        assert set(output_df.columns) == {
             "DAWBA_ID",
             "true",
             "pred_stage1",
@@ -268,13 +271,10 @@ class TestGetLrOutput:
             "pred_stage3_increment",
             "pred_stage3_total",
         }
-        assert set(df_out.columns) == expected
 
-    def test_output_row_count_matches_test_split(self, base_df, tmp_path):
+    def test_output_row_count_matches_test_split(self, base_df):
         split_id = 0
-        expected_rows = (base_df["split_id"] == split_id).sum()
-        export_path = tmp_path / "out.parquet"
-        get_lr_output(
+        _, output_df = get_lr_output(
             df=base_df,
             agg_type="avg",
             num_layers=3,
@@ -283,14 +283,13 @@ class TestGetLrOutput:
             split_id=split_id,
             impact_type="self",
             impactme_outcome=None,
-            export_path=export_path,
             max_iter=100,
-            seed=0,
+            seed=SEED,
             linear_type="elastic",
             perm_dir=None,
+            hypothesis_shuffle=None,
         )
-        df_out = pd.read_parquet(export_path)
-        assert len(df_out) == expected_rows
+        assert len(output_df) == (base_df["split_id"] == split_id).sum()
 
 
 class TestShuffleVals:
