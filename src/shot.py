@@ -135,6 +135,16 @@ def gen_prompt(cur_outcome, text_, impact_type, outcome_desc_type, n_shot=0):
         outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Short"]
     elif outcome_desc_type == "augment":
         outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Augment"]
+    elif outcome_desc_type == "augment_neg":
+        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()][
+            "Description_Augment_Negative"
+        ]
+    elif outcome_desc_type == "neutral":
+        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Neutral"]
+    else:
+        raise ValueError(
+            f"`outcome_desc_type` must be one of ['short', 'original', 'augment', 'augment_neg', 'neutral']. Got {outcome_desc_type}."
+        )
     ## Zero-shot prompting
     if n_shot == 0:
         if impact_type == "parent":
@@ -389,7 +399,7 @@ def get_results_proba(
             outcome_probs.append(proba)
         new_row = row.to_dict()
         # current col is called open_text_block_0_shot, need to rerun
-        new_row[f"block_0_shot_{new_col_suffix}"] = np.array(outcome_probs)
+        new_row[f"open_text_block_0_shot_{new_col_suffix}"] = np.array(outcome_probs)
         df_rows.append(new_row)
     return pd.DataFrame(df_rows)
 
@@ -412,7 +422,7 @@ def get_shot_results(
     Parameters
     ---------
     outcome_desc_type: str
-        One of ['original', 'short', 'augment']
+        One of ['original', 'short', 'augment', 'augment_neg']
     output_type: str
         One of ['binary', 'proba', 'proba-limited']
     """
@@ -510,7 +520,9 @@ def main():
     parser.add_argument("--save_path", required=True)
     parser.add_argument("--log_path", required=True)
     parser.add_argument(
-        "--outcome_desc_type", required=True, choices=["short", "original", "augment"]
+        "--outcome_desc_type",
+        required=True,
+        choices=["short", "original", "augment", "augment_neg", "neutral"],
     )
     parser.add_argument(
         "--n_shot",
