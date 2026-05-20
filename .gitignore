@@ -8,11 +8,9 @@ notebooks/0_tune_en_reduced.ipynb
 notebooks/0_shot_experiment.ipynb
 
 # Results
-v1_results/
-initial_preds/
-initial_preds_try1/
-initial_results/ 
-try1/
+initial_results*/
+initial_preds*/
+outcome_analysis/
 
 
 ## Extras
@@ -20,3 +18,4 @@ src/__pycache__
 logs/
 block/
 swarm_dir/
+

@@ -18,12 +18,24 @@ def run_swarms(*_, agg_list, impact_list, swarm_log_dir, cmd_dir, n_jobs, n_thre
         for impact_type in impact_list:
             log_dir = swarm_log_dir / agg_type / impact_type
             log_dir.mkdir(parents=True, exist_ok=True)
-            swarm_time = "2:00:0"
+            swarm_time = "0:20:0"
             gb = 12
             swarm_path = cmd_dir / agg_type / f"{impact_type}.swarm"
             num_commands = get_len_swarm(swarm_path=swarm_path)
-            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {(2*n_jobs*n_threads)} --logdir={log_dir}  --job-name={agg_type.upper()}-{impact_type.upper()} --partition=quick {swarm_path}"
+            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {(2*n_jobs*n_threads)} --logdir={log_dir}  --job-name={agg_type.upper()}-{impact_type.upper()} --partition=quick -b 4 {swarm_path}"
             subprocess.run(swarm_cmd, shell=True)
+
+
+def run_outcome_swarm(swarm_log_dir, cmd_dir, agg_types):
+    for agg_type in agg_types:
+        log_dir = swarm_log_dir / f"{agg_type}.log"
+        swarm_path = cmd_dir / f"{agg_type}.swarm"
+        swarm_time = "0:05:00"
+        gb = 5
+        num_threads = 6
+        swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={swarm_log_dir}  --job-name={agg_type.upper()}- --partition=quick -b 4 {swarm_path}"
+        subprocess.run(swarm_cmd, shell=True)
+
 
 ####################################################
 ################# MAKE CMD STRINGS #################
@@ -44,13 +56,25 @@ def create_cmd_str(
     n_jobs,
     n_threads,
     tune_flag_str,
+    n_layers,
+    alpha_list=None,
+    l1_list=None,
+    impactme_outcomes=None,
     max_iter=10000,
 ):
     """
     Create command for lr_preds
 
     TODO: Check if good file already exists for passed in configuration
+    TODO: Make num_layers dynamic
     """
+    alpha_list_str = (
+        " ".join(str(a) for a in alpha_list) if alpha_list is not None else "None"
+    )
+    l1_list_str = " ".join(str(l) for l in l1_list) if l1_list is not None else "None"
+    impactme_outcome_str = (
+        " ".join(impactme_outcomes) if impactme_outcomes is not None else "None"
+    )
     cmd_str = f"export PYTHONPATH={BASE_PATH}; \
 			export OMP_NUM_THREADS={n_threads}; \
 			uv run python -m src.elastic_preds \
@@ -58,6 +82,10 @@ def create_cmd_str(
 			--agg_type {agg_type}\
 			--df_path {df_path}\
 			--base_save_dir {base_save_dir}\
+            --num_layers {n_layers}\
+            --impactme_outcome {impactme_outcome_str}\
+            --alpha_list {alpha_list_str}\
+            --l1_list {l1_list_str}\
 			--seed {seed}\
 			--n_repeats {n_repeats}\
 			--split_tol {split_tol}\
@@ -66,6 +94,7 @@ def create_cmd_str(
 			--max_iter {max_iter}\
             --tune {tune_flag_str}"
     return " ".join(cmd_str.split())
+
 
 def make_full_lr(
     seg_types,
@@ -76,6 +105,10 @@ def make_full_lr(
     n_jobs,
     n_threads,
     tune_flag_str,
+    n_layers,
+    alpha_list=None,
+    l1_list=None,
+    impactme_outcomes=None,
     max_iter=50000,  # need more iters to converge bc of higher dimension w/ embeddings
 ):
     cmd_list = []
@@ -88,13 +121,7 @@ def make_full_lr(
             / seg_type
             / f"{impact_type}.parquet"
         )
-        save_dir = (
-            base_save_dir
-            / agg_type
-            / impact_type
-            / model_name
-            / seg_type
-        )
+        save_dir = base_save_dir / agg_type / impact_type / model_name / seg_type
         cmd_str = create_cmd_str(
             impact_type=impact_type,
             df_path=df_path,
@@ -106,7 +133,11 @@ def make_full_lr(
             max_iter=max_iter,  # need more iters to converge bc of higher dimension w/ embeddings
             agg_type=agg_type,
             n_threads=n_threads,
-            tune_flag_str=tune_flag_str
+            tune_flag_str=tune_flag_str,
+            n_layers=n_layers,
+            alpha_list=alpha_list,
+            l1_list=l1_list,
+            impactme_outcomes=impactme_outcomes,
         )
         cmd_list.append(cmd_str)
     return cmd_list
@@ -120,7 +151,11 @@ def make_full_shot(
     n_threads,
     pred_type,
     tune_flag_str,
-    temp=0.6, 
+    n_layers,
+    impactme_outcomes=None,
+    alpha_list=None,
+    l1_list=None,
+    temp=0.6,
     desc_type="augment",
     max_iter=50000,  # need more iters to converge bc of higher dimension w/ embeddings
 ):
@@ -152,6 +187,10 @@ def make_full_shot(
         n_threads=n_threads,
         max_iter=max_iter,
         agg_type=pred_type,
-        tune_flag_str=tune_flag_str
+        tune_flag_str=tune_flag_str,
+        n_layers=n_layers,
+        alpha_list=alpha_list,
+        l1_list=l1_list,
+        impactme_outcomes=impactme_outcomes,
     )
     return cmd_str

@@ -118,7 +118,7 @@ def gen_prompt(cur_outcome, text_, impact_type, outcome_desc_type, n_shot=0):
     Parameters
     ---------
     outcome_desc_type: str
-        One of ['original', 'short', 'augment']
+        One of ['short', 'original', 'augment', 'augment_neg']
     """
     ## Param validation
     if impact_type not in ["self", "parent"]:
