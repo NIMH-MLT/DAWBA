@@ -15,15 +15,21 @@ def get_len_swarm(swarm_path):
     return min(line_count, 20)
 
 
-def run_perm_swarm(swarm_log_dir, cmd_dir, scratch_gb=10, n_batch=1):
+def run_perm_swarm(
+    swarm_log_dir,
+    cmd_dir,
+    scratch_gb=10,
+    n_batch=1,
+    process_gb=2,
+    partition="quick",
+    swarm_time="1:00:00",
+):
     for impact_swarm_path in cmd_dir.iterdir():
         impact_name = impact_swarm_path.stem
         log_dir = swarm_log_dir / impact_name
         log_dir.mkdir(parents=True, exist_ok=True)
-        swarm_time = "0:30:00"
-        gb = 2
         num_cpu = 8
-        swarm_cmd = f"swarm --time={swarm_time} --gres=lscratch:{scratch_gb} -g {gb} -t {num_cpu} --logdir={log_dir}  --job-name={impact_name}_preds_perm --partition=quick -b {n_batch} {impact_swarm_path}"
+        swarm_cmd = f"swarm --time={swarm_time} --gres=lscratch:{scratch_gb} -g {process_gb} -t {num_cpu} --logdir={log_dir}  --job-name={impact_name}_preds_perm --partition={partition} -b {n_batch} {impact_swarm_path}"
         print(swarm_cmd)
         subprocess.run(swarm_cmd, shell=True)
 
@@ -61,14 +67,14 @@ def run_perm_r2_swarm(impact_list, layer_list, log_dir, cmd_dir, n_batch_for_3=3
             swarm_log_dir = log_dir / f"{impact_type}_{num_layers}"
             swarm_path = cmd_dir / f"{impact_type}_{num_layers}.swarm"
             if num_layers == 2:
-                swarm_time = "0:02:00"
-                n_batch = int(n_batch_for_3 * 1.5)
+                swarm_time = "0:5:00"
+                n_batch = int(n_batch_for_3 * 2)
             else:
-                swarm_time = "0:05:00"
+                swarm_time = "0:10:00"
                 n_batch = n_batch_for_3
-            gb = 4
+            gb = 6
             num_threads = 6
-            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={swarm_log_dir}  --job-name=perm_r2_{impact_type}_{num_layers} --partition=quick -b {n_batch} {swarm_path}"
+            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={swarm_log_dir}  --job-name=perm_r2_{impact_type}_{num_layers} --partition=norm -b {n_batch} {swarm_path}"
             subprocess.run(swarm_cmd, shell=True)
 
 

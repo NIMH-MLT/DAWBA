@@ -56,22 +56,29 @@ def check_ratios(df_w_splits, pred_type, n_splits, tol=0.1, verbose=0):
         print(f"\tSplits are all good!")
 
 
-def export_dfs(combined_output_df, combined_perm_ids, save_dir):
+def export_dfs(combined_output_df, combined_perm_ids, combined_coef_df, save_dir):
     """
     Export dfs at specified dir. If file already exists, skip without error.
     """
     save_dir.mkdir(exist_ok=True, parents=True)
     pred_path = save_dir / "output_preds.parquet"
     id_path = save_dir / "perm_ids.parquet"
+    coef_path = save_dir / "coefs.parquet"
 
     if pred_path.exists():
         print(f"skipping export OUTPUT PRED: already exists at {pred_path}")
     else:
         combined_output_df.to_parquet(pred_path)
+
     if id_path.exists():
         print(f"skipping export PERM ID: already exists at {id_path}")
     else:
         combined_perm_ids.to_parquet(id_path)
+
+    if coef_path.exists():
+        print(f"skipping export COEFS: already exists at {coef_path}")
+    else:
+        combined_coef_df.to_parquet(coef_path)
 
 
 def loop_through_resid_params(
@@ -95,16 +102,10 @@ def loop_through_resid_params(
     n_jobs=1,
     verbose=0,
 ):
-    """
-    linear_type:
-        - "elastic": sweep alpha + l1_ratio (current behavior)
-        - "ridge": sweep alpha only; do not loop over l1_ratio
-    """
     if linear_type not in {"elastic", "ridge"}:
         raise ValueError("linear_type must be either 'elastic' or 'ridge'")
 
     df = pd.read_parquet(df_path)
-    joblist = []
 
     # Ridge never sweeps l1_ratio.
     l1_values = l1_list if linear_type == "elastic" else [None]
@@ -112,8 +113,9 @@ def loop_through_resid_params(
     def loop_through_splits(selected_alphas, selected_l1s, df_w_splits):
         perm_id_list = []
         output_df_list = []
+        coef_df_list = []  # NEW
         for split_id in range(n_splits):
-            perm_id_df, output_df = get_lr_output(
+            perm_id_df, output_df, coef_df = get_lr_output(  # unpack 3 values
                 df=df_w_splits,
                 num_layers=num_layers,
                 selected_alphas=selected_alphas,
@@ -130,12 +132,14 @@ def loop_through_resid_params(
             )
             perm_id_list.append(perm_id_df)
             output_df_list.append(output_df)
-        ## Agg
+            coef_df_list.append(coef_df)
+        ## Aggregate
         combined_perm_ids = pd.concat(perm_id_list, axis=1)
         combined_output_df = pd.concat(output_df_list, axis=0)
+        combined_coef_df = pd.concat(coef_df_list, axis=0, ignore_index=True)
         assert combined_perm_ids.shape[1] == 3
         assert combined_output_df["DAWBA_ID"].nunique() == len(combined_output_df)
-        return combined_perm_ids, combined_output_df
+        return combined_perm_ids, combined_output_df, combined_coef_df
 
     for repeat in range(n_repeats):
         random_state_for_split = seed + repeat
@@ -153,17 +157,9 @@ def loop_through_resid_params(
                 # No alpha/l1 sweep here
                 selected_alphas = [None, None]
                 selected_l1s = [None, None]
-                export_dir = (
-                    base_save_dir
-                    / impactme_outcome
-                    / f"repeat_{repeat}"
-                    # / f"split_{split_id}.parquet"
-                )
-                combined_perm_ids, combined_output_df = loop_through_splits(
-                    selected_alphas,
-                    selected_l1s,
-                    df_w_splits,
-                    # split_id,
+                export_dir = base_save_dir / impactme_outcome / f"repeat_{repeat}"
+                combined_perm_ids, combined_output_df, combined_coef_df = (
+                    loop_through_splits(selected_alphas, selected_l1s, df_w_splits)
                 )
             else:
                 # num_layers == 3
@@ -175,31 +171,24 @@ def loop_through_resid_params(
                         / impactme_outcome
                         / f"alpha_{alpha_2}"
                         / f"repeat_{repeat}"
-                        # / f"split_{split_id}.parquet"
                     )
-                    combined_perm_ids, combined_output_df = loop_through_splits(
-                        selected_alphas,
-                        selected_l1s,
-                        df_w_splits,
-                        # split_id,
+                    combined_perm_ids, combined_output_df, combined_coef_df = (
+                        loop_through_splits(selected_alphas, selected_l1s, df_w_splits)
                     )
         else:
             # Regular iteration
             if num_layers in [1, 2]:
-                # L3 is elastic/ridge
                 for alpha_3 in alpha_list:
                     selected_alphas = [None, alpha_3]
                     selected_l1s = [None, None]
                     export_dir = base_save_dir / f"alpha_{alpha_3}" / f"repeat_{repeat}"
-                    combined_perm_ids, combined_output_df = loop_through_splits(
-                        selected_alphas,
-                        selected_l1s,
-                        df_w_splits,
-                        # split_id,
+                    combined_perm_ids, combined_output_df, combined_coef_df = (
+                        loop_through_splits(selected_alphas, selected_l1s, df_w_splits)
                     )
                     export_dfs(
                         combined_perm_ids=combined_perm_ids,
                         combined_output_df=combined_output_df,
+                        combined_coef_df=combined_coef_df,
                         save_dir=export_dir,
                     )
             else:
@@ -212,15 +201,13 @@ def loop_through_resid_params(
                         / f"alpha_{alpha_2}_{alpha_3}"
                         / f"repeat_{repeat}"
                     )
-                    combined_perm_ids, combined_output_df = loop_through_splits(
-                        selected_alphas,
-                        selected_l1s,
-                        df_w_splits,
-                        # split_id,
+                    combined_perm_ids, combined_output_df, combined_coef_df = (
+                        loop_through_splits(selected_alphas, selected_l1s, df_w_splits)
                     )
                     export_dfs(
                         combined_perm_ids=combined_perm_ids,
                         combined_output_df=combined_output_df,
+                        combined_coef_df=combined_coef_df,  # NEW
                         save_dir=export_dir,
                     )
     return None

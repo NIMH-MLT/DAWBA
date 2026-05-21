@@ -25,5 +25,9 @@ old_preds/
 sig_tests/
 sig_tests_reverse/
 perm_res_old/
+perm_res_old2/
 perm_res/
 notebooks/old/
+
+
+tests/

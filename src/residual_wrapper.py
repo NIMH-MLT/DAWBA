@@ -67,10 +67,11 @@ def loop_through_params(
         product(param_dict["layers"], param_dict["agg"], param_dict["llama"])
     ):
         print(f"\t{cur_iter+1} / {tot}")
-        if agg_type in ["max", "avg", "block"]:
-            desc_seg_list = param_dict["seg"]
-        else:
-            desc_seg_list = param_dict["desc"]
+        desc_seg_list = (
+            param_dict["seg"]
+            if agg_type in ["max", "avg", "block"]
+            else param_dict["desc"]
+        )
         for desc_seg in desc_seg_list:
             df_path = get_df_path(
                 df_dir=df_dir,
@@ -112,12 +113,14 @@ def loop_through_params(
 
 def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type):
     """
-    Aggregate exported files for individual model configs/repeats and aggregate into single file.
-    Label each sub-df with relevant config values (agg, impact, etc) + repeat iteration.
+    Aggregate exported files for individual model configs/repeats into single files.
+    Labels each sub-df with relevant config values + repeat iteration.
+    Also aggregates coefs.parquet alongside preds and perm IDs.
     """
-
     pred_list = []
     id_list = []
+    coef_list = []
+
     for repeat in range(n_repeats):
         id_check_list = []
         for num_layers, agg_type, llama_model in product(
@@ -125,20 +128,20 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
             param_dict["agg"],
             param_dict["llama"],
         ):
-            if agg_type in ["max", "avg", "block"]:
-                desc_seg_list = param_dict["seg"]
-            else:
-                desc_seg_list = param_dict["desc"]
+            desc_seg_list = (
+                param_dict["seg"]
+                if agg_type in ["max", "avg", "block"]
+                else param_dict["desc"]
+            )
             for desc_seg in desc_seg_list:
-                if num_layers == 2:
-                    alpha_list = param_dict["alpha"]
-                else:
-                    alpha_list = [
-                        f"{alpha2}_{alpha3}"
-                        for alpha2, alpha3 in product(
-                            param_dict["alpha"], param_dict["alpha"]
-                        )
+                alpha_list = (
+                    param_dict["alpha"]
+                    if num_layers == 2
+                    else [
+                        f"{a2}_{a3}"
+                        for a2, a3 in product(param_dict["alpha"], param_dict["alpha"])
                     ]
+                )
                 for alpha in alpha_list:
                     import_dir = (
                         base_import_dir
@@ -151,42 +154,37 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                         / f"alpha_{alpha}"
                         / f"repeat_{repeat}"
                     )
+
+                    # ── shared config labels ──────────────────────────────────
+                    meta = dict(
+                        repeat=repeat,
+                        num_layers=num_layers,
+                        agg_type=agg_type,
+                        llama_model=llama_model,
+                        desc_seg=desc_seg,
+                        alpha=str(alpha),
+                    )
+
                     ## Preds ##
                     df_preds = pd.read_parquet(import_dir / "output_preds.parquet")
-                    # Add meta data
-                    df_preds_w_config = df_preds.assign(
-                        repeat=repeat,
-                        num_layers=num_layers,
-                        agg_type=agg_type,
-                        # impact_type=impact_type,
-                        llama_model=llama_model,
-                        desc_seg=desc_seg,
-                        alpha=str(alpha),
-                    )
-                    # Append
-                    pred_list.append(df_preds_w_config)
-                    ## IDS ##
+                    pred_list.append(df_preds.assign(**meta))
+
+                    ## IDs ##
                     df_ids = pd.read_parquet(import_dir / "perm_ids.parquet")
-                    # Append raw to check consistency
                     id_check_list.append(df_ids)
-                    # Add meta
-                    df_ids_w_config = df_ids.assign(
-                        repeat=repeat,
-                        num_layers=num_layers,
-                        agg_type=agg_type,
-                        # impact_type=impact_type,
-                        llama_model=llama_model,
-                        desc_seg=desc_seg,
-                        alpha=str(alpha),
-                    )
-                    # Append for export
-                    id_list.append(df_ids_w_config)
-        # Ensure permuted IDs consistent across all model configuration trainings for this repeat
+                    id_list.append(df_ids.assign(**meta))
+
+                    ## Coefs ##
+                    df_coefs = pd.read_parquet(import_dir / "coefs.parquet")
+                    coef_list.append(df_coefs.assign(**meta))
+
+        # Ensure permuted IDs are consistent across all model configurations for this repeat
         assert all(id_check_list[0].equals(s) for s in id_check_list)
     # Concat lists of dfs
     pred_df_combined = pd.concat(pred_list, ignore_index=True)
     id_df_combined = pd.concat(id_list, ignore_index=True)
-    return pred_df_combined, id_df_combined
+    coef_df_combined = pd.concat(coef_list, ignore_index=True)
+    return pred_df_combined, id_df_combined, coef_df_combined
 
 
 def export_df(export_path, df):
@@ -235,16 +233,20 @@ def main(argv=None):
     )
     ### Aggregate + export ###
     print("Aggregating and exporting...")
-    pred_df_combined, id_df_combined = aggregate_across_params(
+    pred_df_combined, id_df_combined, coef_df_combined = aggregate_across_params(
         param_dict=args.param_dict,
         base_import_dir=scratch_dir / perm_dir.name,
         n_repeats=args.config_dict["n_repeats"],
         impact_type=args.impact_type,
     )
-    export_path_preds = perm_dir / args.impact_type / "pred_df_combined.parquet"
-    export_path_ids = perm_dir / args.impact_type / "id_df_combined.parquet"
+
+    export_path_preds = perm_dir / args.impact_type / "pred_df_combined_new.parquet"
+    export_path_ids = perm_dir / args.impact_type / "id_df_combined_new.parquet"
+    export_path_coefs = perm_dir / args.impact_type / "coef_df_combined_new.parquet"
+
     export_df(export_path_preds, pred_df_combined)
     export_df(export_path_ids, id_df_combined)
+    export_df(export_path_coefs, coef_df_combined)
     print("DONE!")
 
 

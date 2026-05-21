@@ -45,8 +45,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         elif self.agg_type == "binary":
             return "open_text_block_0_shot_binary"
         elif self.agg_type == "proba-limited":
-            # col_to_add = "block_0_shot_proba_limited"
-            return "open_text_block_0_shot"
+            return "open_text_block_0_shot_proba_limited"
         else:
             raise ValueError(f"Unrecognized agg_type: {self.agg_type}")
 
@@ -101,6 +100,19 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
                 f"Unrecognized model_type. Expected one of ['elastic', 'regular', 'ridge']. Got {model_type}"
             )
 
+    def _extract_coefs(self, model, feature_names, stage_label):
+        """
+        Extract intercept + coefficients from a fitted sklearn linear model
+        into a tidy DataFrame with columns [stage, feature, coef].
+        Works for LinearRegression, Ridge, and ElasticNet.
+        """
+        coef = np.atleast_1d(model.coef_).flatten()
+        intercept = np.atleast_1d(model.intercept_).flatten()
+        rows = [{"stage": stage_label, "feature": "intercept", "coef": intercept[0]}]
+        for name, val in zip(feature_names, coef):
+            rows.append({"stage": stage_label, "feature": name, "coef": val})
+        return pd.DataFrame(rows)
+
     def shuffle_vals(self, X, col_to_shuffle_np, perm_dir):
         ## Get permutation seed
         perm_seed_path = perm_dir / f"seed.txt"
@@ -110,7 +122,6 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
             )
         with open(perm_seed_path, "r") as f:
             perm_seed = int(f.read().strip())
-        # print(f"PERMUTING with seed: {perm_seed}")
         # Sort by DAWBA_ID to ensure canonical order regardless of input row order
         sort_idx = np.argsort(X["DAWBA_ID"].values)
         X_sorted = X.iloc[sort_idx].reset_index(drop=True)
@@ -136,7 +147,6 @@ class IndependentRegressor(BaseRegressor):
         super().__init__(**kwargs)
 
     def fit(self, X, y, shuffle=None, perm_dir=None):
-        # TODO: Implement impactme outcome functionality in 1 layer
         """
         No longer residual-- predict raw impact with each of X1, X2, X3
 
@@ -148,7 +158,6 @@ class IndependentRegressor(BaseRegressor):
         """
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
-        # TODO: Implement shuffling for Sum & Questionnaire layers as well
         if shuffle == "text":
             # shuffle text layer inputs (ONLY IN TRAIN)
             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
@@ -158,6 +167,17 @@ class IndependentRegressor(BaseRegressor):
             raise ValueError(
                 f"Unrecognized `shuffle` in fit method: {shuffle}. Must be one of ['text', None]"
             )
+
+        # Build feature name lists — stored so get_coef_df() can use them
+        self._feat1 = ["sum_score"]
+        self._feat2 = list(self.quest_cols)
+        prob_col = self._get_prob_col()
+        n_prob = X3.shape[1]
+        if self.agg_type in ["avg", "max", "block"]:
+            # LR output doesnt have a8,e3,34
+            self._feat3 = IMPACTME_OUTCOMES_LR
+        else:
+            self._feat3 = IMPACTME_OUTCOMES_SHOT
 
         # Sum scores
         self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
@@ -177,6 +197,14 @@ class IndependentRegressor(BaseRegressor):
         self.pred3_train_ = self.stage3_.predict(X3)
         return self
 
+    def get_coef_df(self):
+        parts = [
+            self._extract_coefs(self.stage1_, self._feat1, "stage1"),
+            self._extract_coefs(self.stage2_, self._feat2, "stage2"),
+            self._extract_coefs(self.stage3_, self._feat3, "stage3"),
+        ]
+        return pd.concat(parts, ignore_index=True)
+
     def predict_all(self, X):
         """
         Predict with each model independently
@@ -185,22 +213,17 @@ class IndependentRegressor(BaseRegressor):
         pred1 = self.stage1_.predict(X1)
         pred2 = self.stage2_.predict(X2)
         pred3 = self.stage3_.predict(X3)
-        out = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "pred_stage1": pred1,
                 "pred_stage2_total": pred2,
                 "pred_stage3_total": pred3,
             }
         )
-        return out
 
 
 class ResidualRegressor(BaseRegressor):
-    def __init__(
-        self,
-        num_layers,
-        **kwargs,
-    ):
+    def __init__(self, num_layers, **kwargs):
         if num_layers not in [2, 3]:
             raise ValueError(f"Num layers must be one of [2,3]. Got {num_layers}")
         super().__init__(**kwargs)
@@ -213,6 +236,7 @@ class ResidualRegressor(BaseRegressor):
         """
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
+
         if shuffle == "text":
             # shuffle text layer inputs (ONLY IN TRAIN)
             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
@@ -223,7 +247,18 @@ class ResidualRegressor(BaseRegressor):
                 f"Unrecognized `shuffle` in fit method: {shuffle}. Must be one of ['text', None]"
             )
 
-        ## Layer 1- Sum scores
+        # Build feature name lists
+        self._feat1 = ["sum_score"]
+        self._feat2 = list(self.quest_cols)
+        prob_col = self._get_prob_col()
+        n_prob = X3.shape[1]
+        if self.agg_type in ["avg", "max", "block"]:
+            # LR output doesnt have a8,e3,34
+            self._feat3 = IMPACTME_OUTCOMES_LR
+        else:
+            self._feat3 = IMPACTME_OUTCOMES_SHOT
+
+        ## Layer 1 — Sum scores
         self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
         self.stage1_.fit(X1, y)
         self.pred1_train_ = self.stage1_.predict(X1)
@@ -255,7 +290,7 @@ class ResidualRegressor(BaseRegressor):
             self.pred2_train_ = self.pred1_train_
             resid2 = resid1
 
-        ## Layer 3
+        ## Layer 3 — Text probabilities
         if self.impactme_outcome is not None:
             # Train with regular univariable Linear Regression
             self.stage3_ = self._make_model(
@@ -275,6 +310,14 @@ class ResidualRegressor(BaseRegressor):
         self.pred3_train_ = self.stage3_.predict(X3)
         return self
 
+    def get_coef_df(self):
+        parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
+        # Only emit stage2 if it was independently fitted (3-layer mode)
+        if self.num_layers == 3:
+            parts.append(self._extract_coefs(self.stage2_, self._feat2, "stage2"))
+        parts.append(self._extract_coefs(self.stage3_, self._feat3, "stage3"))
+        return pd.concat(parts, ignore_index=True)
+
     def predict_all(self, X):
         """
         Returns all stage predictions and cumulative totals in a DataFrame.
@@ -282,20 +325,16 @@ class ResidualRegressor(BaseRegressor):
         X1, X2, X3 = self._build_X_blocks(X)
 
         pred1 = self.stage1_.predict(X1)
-        if self.num_layers == 3:
-            ## If 3 layers, use layer2 preds
-            pred2 = self.stage2_.predict(X2)
-
-        else:  # num layers = 2
-            ## If 2 layers, skip preds from layer2
-            pred2 = np.zeros(len(pred1))
+        pred2 = (
+            self.stage2_.predict(X2) if self.num_layers == 3 else np.zeros(len(pred1))
+        )
 
         # Use layer 3 to predict layer 2 residuals
         pred2_total = pred1 + pred2
         pred3 = self.stage3_.predict(X3)
         pred3_total = pred2_total + pred3
 
-        out = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "pred_stage1": pred1,
                 "pred_stage2_increment": pred2,
@@ -304,7 +343,6 @@ class ResidualRegressor(BaseRegressor):
                 "pred_stage3_total": pred3_total,
             }
         )
-        return out
 
 
 def get_lr_output(
@@ -318,7 +356,7 @@ def get_lr_output(
     impactme_outcome,
     max_iter,
     seed,
-    linear_type,  # elastic or ridge
+    linear_type,  # ridge
     perm_dir,
     hypothesis_shuffle=None,  # None, 'text'. ' or 'resid1'
 ):
@@ -357,11 +395,17 @@ def get_lr_output(
 
     pred_df = model.predict_all(test_reset)
 
-    ## ===========> Create dfs
+    # ── Coefficients ──────────────────────────────────────────────────────────
+    coef_df = model.get_coef_df()
+    coef_df["split_id"] = split_id  # tag with fold so rows stay traceable
+
+    # ── Permutation IDs ───────────────────────────────────────────────────────
     perm_id_df = pd.DataFrame(
         {f"perm_id_split_{split_id}": model.perm_ids},
         index=list(range(len(model.perm_ids))),
     )
+
+    # ── Predictions ───────────────────────────────────────────────────────────
     if num_layers == 1:
         output_df = pd.DataFrame(
             {
@@ -384,4 +428,4 @@ def get_lr_output(
                 "pred_stage3_total": pred_df["pred_stage3_total"].values,
             }
         )
-    return perm_id_df, output_df
+    return perm_id_df, output_df, coef_df
