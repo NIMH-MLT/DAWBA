@@ -17,7 +17,7 @@ outcome_analysis/
 src/__pycache__
 logs/
 block/
-swarm_dir/
+*swarm_dir*/
 */__pycache__/
 linear_preds/
 preds/
@@ -29,5 +29,5 @@ perm_res_old2/
 perm_res/
 notebooks/old/
 
-
+*scratch*/
 tests/

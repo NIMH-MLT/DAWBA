@@ -10,7 +10,7 @@ def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
     if agg_type in ["avg", "max", "block"]:
         intermediate_dir = "w_probs"
     elif agg_type in ["binary", "proba-limited"]:
-        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
+        intermediate_dir = f"w_0_shot_probs_sep_cols/temp_0.6/{agg_type}"
     else:
         raise ValueError(f"Unreccognized agg type: {agg_type}")
     return (
@@ -93,6 +93,7 @@ def loop_through_params(
             loop_through_resid_params(
                 num_layers=num_layers,
                 agg_type=agg_type,
+                desc_seg_type=desc_seg,
                 impact_type=impact_type,
                 df_path=df_path,
                 base_save_dir=save_dir,  # sctratch dir where results temporarily written to
@@ -240,9 +241,9 @@ def main(argv=None):
         impact_type=args.impact_type,
     )
 
-    export_path_preds = perm_dir / args.impact_type / "pred_df_combined_new.parquet"
-    export_path_ids = perm_dir / args.impact_type / "id_df_combined_new.parquet"
-    export_path_coefs = perm_dir / args.impact_type / "coef_df_combined_new.parquet"
+    export_path_preds = perm_dir / args.impact_type / "pred_df.parquet"
+    export_path_ids = perm_dir / args.impact_type / "id_df.parquet"
+    export_path_coefs = perm_dir / args.impact_type / "coef_df.parquet"
 
     export_df(export_path_preds, pred_df_combined)
     export_df(export_path_ids, id_df_combined)

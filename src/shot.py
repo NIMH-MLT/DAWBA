@@ -84,7 +84,7 @@ The text is taken from the open-response section of the The Development and Well
 - Do not include labels, hyphens, or parentheses.
 - Base your judgment only on the adolescent's own statements and experiences.
 - Ignore statements about the parent, family, or other people unless the outcome definition explicitly includes them.
-- - Count both direct and clearly implied evidence when it matches the definition below.
+- Count both direct and clearly implied evidence when it matches the definition below.
 
 ---
 
@@ -113,38 +113,58 @@ Response options:
     return prompt
 
 
+def get_prompt_meta(outcome_desc_type):
+    if outcome_desc_type == "new":  # impactme outcomes + hopelessness and pessimism
+        outcome_desc_path = (
+            BASE_PATH / "data" / "complete_raw" / "outcome_desc_update.xlsx"
+        )
+        descr_col = "Description"
+        outcome_proper_col = "Name"
+    elif outcome_desc_type == "expanded":  # 80 new outcomes
+        outcome_desc_path = (
+            BASE_PATH / "data" / "complete_raw" / "80_Depression_Outcomes.xlsx"
+        )
+        descr_col = "Definition"
+        outcome_proper_col = "Outcome"
+    else:  # impactme outcomes
+        outcome_desc_path = (
+            BASE_PATH / "data" / "complete_raw" / "impactme_outcome_desc.xlsx"
+        )
+        outcome_proper_col = "Name"
+        if outcome_desc_type == "original":
+            descr_col = "Description_Original"
+        elif outcome_desc_type == "short":
+            descr_col = "Description_Short"
+        elif outcome_desc_type == "augment":
+            descr_col = "Description_Augment"
+        elif outcome_desc_type == "augment_neg":
+            descr_col = "Description_Augment_Negative"
+        elif outcome_desc_type == "neutral":
+            descr_col = "Description_Neutral"
+        else:
+            raise ValueError(
+                f"`outcome_desc_type` must be one of ['short', 'original', 'augment', 'augment_neg', 'new', 'expanded']. Got {outcome_desc_type}."
+            )
+    return outcome_desc_path, descr_col, outcome_proper_col
+
+
 def gen_prompt(cur_outcome, text_, impact_type, outcome_desc_type, n_shot=0):
     """
     Parameters
     ---------
     outcome_desc_type: str
-        One of ['short', 'original', 'augment', 'augment_neg']
+        One of ['short', 'original', 'augment', 'augment_neg', 'new', 'expanded']
     """
     ## Param validation
     if impact_type not in ["self", "parent"]:
         raise ValueError(f"Unrecognized impact type: {impact_type}")
     ## Load information on outcome
-    outcome_desc_path = (
-        BASE_PATH / "data" / "complete_raw" / "impactme_outcome_desc.xlsx"
+    outcome_desc_path, descr_col, outcome_proper_col = get_prompt_meta(
+        outcome_desc_type
     )
     outcome_desc_df = pd.read_excel(outcome_desc_path, index_col=0)
-    outcome_proper = outcome_desc_df.loc[cur_outcome.upper()]["Name"]
-    if outcome_desc_type == "original":
-        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Original"]
-    elif outcome_desc_type == "short":
-        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Short"]
-    elif outcome_desc_type == "augment":
-        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Augment"]
-    elif outcome_desc_type == "augment_neg":
-        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()][
-            "Description_Augment_Negative"
-        ]
-    elif outcome_desc_type == "neutral":
-        outcome_desc = outcome_desc_df.loc[cur_outcome.upper()]["Description_Neutral"]
-    else:
-        raise ValueError(
-            f"`outcome_desc_type` must be one of ['short', 'original', 'augment', 'augment_neg', 'neutral']. Got {outcome_desc_type}."
-        )
+    outcome_proper = outcome_desc_df.loc[cur_outcome.upper()][outcome_proper_col]
+    outcome_desc = outcome_desc_df.loc[cur_outcome.upper()][descr_col]
     ## Zero-shot prompting
     if n_shot == 0:
         if impact_type == "parent":
@@ -352,7 +372,7 @@ def get_results_binary(
             )
             outcome_probs.append(output)
         new_row = row.to_dict()
-        new_row["open_text_block_0_shot_binary"] = np.array(outcome_probs)
+        new_row["open_text_block_0_shot"] = np.array(outcome_probs)
         df_rows.append(new_row)
     return pd.DataFrame(df_rows)
 
@@ -369,7 +389,6 @@ def get_results_proba(
     impact_type,
     limit_output,
 ):
-    new_col_suffix = "proba_limited" if limit_output else "proba"
     token_ids = get_binary_token_ids(tokenizer)
     df_rows = []
     tot_rows = len(text_df)
@@ -398,8 +417,7 @@ def get_results_proba(
             proba = output["prob_1_normalized"]
             outcome_probs.append(proba)
         new_row = row.to_dict()
-        # current col is called open_text_block_0_shot, need to rerun
-        new_row[f"open_text_block_0_shot_{new_col_suffix}"] = np.array(outcome_probs)
+        new_row[f"open_text_block_0_shot"] = np.array(outcome_probs)
         df_rows.append(new_row)
     return pd.DataFrame(df_rows)
 
@@ -522,7 +540,15 @@ def main():
     parser.add_argument(
         "--outcome_desc_type",
         required=True,
-        choices=["short", "original", "augment", "augment_neg", "neutral"],
+        choices=[
+            "short",
+            "original",
+            "augment",
+            "augment_neg",
+            "neutral",
+            "new",
+            "expanded",
+        ],
     )
     parser.add_argument(
         "--n_shot",

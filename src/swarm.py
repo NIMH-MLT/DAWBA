@@ -89,6 +89,7 @@ N_REPEATS = 10
 def create_cmd_str(
     impact_type,
     agg_type,
+    desc_seg_type,
     df_path,
     base_save_dir,
     seed,
@@ -125,6 +126,7 @@ def create_cmd_str(
 			uv run python -m src.residual_preds \
 			--impact_type {impact_type} \
 			--agg_type {agg_type}\
+            --desc_seg_type {desc_seg_type}\
 			--df_path {df_path}\
 			--base_save_dir {base_save_dir}\
             --perm_dir {perm_dir}\
@@ -178,6 +180,7 @@ def make_full_lr(
         cmd_str = create_cmd_str(
             impact_type=impact_type,
             df_path=df_path,
+            desc_seg_type=seg_type,
             base_save_dir=save_dir,
             seed=SEED,
             n_repeats=N_REPEATS,
@@ -240,6 +243,7 @@ def make_full_shot(
     cmd_str = create_cmd_str(
         impact_type=impact_type,
         df_path=df_path,
+        desc_seg_type=desc_type,
         base_save_dir=save_dir,
         seed=SEED,
         n_repeats=N_REPEATS,

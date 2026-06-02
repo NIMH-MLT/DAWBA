@@ -85,6 +85,7 @@ def loop_through_resid_params(
     *_,
     impact_type,
     agg_type,
+    desc_seg_type,
     df_path,
     base_save_dir,
     n_splits,
@@ -118,6 +119,7 @@ def loop_through_resid_params(
             perm_id_df, output_df, coef_df = get_lr_output(  # unpack 3 values
                 df=df_w_splits,
                 num_layers=num_layers,
+                desc_seg_type=desc_seg_type,
                 selected_alphas=selected_alphas,
                 selected_l1s=selected_l1s,
                 split_id=split_id,
@@ -213,220 +215,6 @@ def loop_through_resid_params(
     return None
 
 
-def get_best_params_score(import_dir, num_layers, linear_type, metric_agg):
-    empty_score_dict = {
-        "avg_mse": 9999999,
-        "stdev_mse": 9999999,
-        "avg_r2": 0,
-        "stdev_r2": 9999999,
-        "avg_diff_2_1": 0,
-        "stdev_diff_2_1": 0,
-        "avg_diff_3_2": 0,
-        "stdev_diff_3_2": 0,
-        "l1_2": "None",
-        "alpha_2": "None",
-        "l1_3": "None",
-        "alpha_3": "None",
-    }
-    best_params_score_dict_mse = empty_score_dict.copy()
-    best_params_score_dict_r2 = empty_score_dict.copy()
-
-    def eval_combo(alpha_list, l1_list, score_root_dir):
-        mse_list = []
-        final_r2_list = []  # r^2 of layer3 final preds (sum of all layers)
-        diff_2_1_list = []  # (layer2 r^2) - (layer1 r^2)
-        diff_3_2_list = []  # (layer3 r^2) - (layer2 r^2)
-        ## Get param lists
-        if num_layers == 3:
-            alpha_2 = alpha_list[1]
-            alpha_3 = alpha_list[2]
-            l1_2 = l1_list[1] if l1_list is not None else "None"
-            l1_3 = l1_list[2] if l1_list is not None else "None"
-        else:  # 2 layers
-            alpha_2 = None
-            alpha_3 = alpha_list[1]
-            l1_2 = None
-            l1_3 = l1_list[1] if l1_list is not None else "None"
-        ## Loop through
-        for repeat_dir in score_root_dir.iterdir():
-            if metric_agg == "per_fold":
-                for split_file in repeat_dir.iterdir():
-                    df_import = pd.read_parquet(split_file)
-                    y_true = df_import["true"]
-
-                    # Preds at each layer
-                    y_pred1 = df_import["pred_stage1"]
-                    y_pred2 = df_import["pred_stage2_total"]
-                    y_pred3 = df_import["pred_stage3_total"]
-
-                    # MSE using final prediction
-                    mse_list.append(mean_squared_error(y_true=y_true, y_pred=y_pred3))
-
-                    # r^2
-                    r2_3 = r2_score(y_true=y_true, y_pred=y_pred3)
-                    r2_2 = r2_score(y_true=y_true, y_pred=y_pred2)
-                    r2_1 = r2_score(y_true=y_true, y_pred=y_pred1)
-
-                    final_r2_list.append(r2_3)
-                    diff_2_1_list.append(r2_2 - r2_1)
-                    diff_3_2_list.append(r2_3 - r2_2)
-            else:  # combined
-                df_list = []
-                for split_file in repeat_dir.iterdir():
-                    df_import = pd.read_parquet(split_file)
-                    df_list.append(df_import)
-                df_combined = pd.concat(df_list)
-                y_true = df_combined["true"]
-
-                # Preds at each layer
-                y_pred1 = df_combined["pred_stage1"]
-                y_pred2 = df_combined["pred_stage2_total"]
-                y_pred3 = df_combined["pred_stage3_total"]
-
-                # MSE using final prediction
-                mse_list.append(mean_squared_error(y_true=y_true, y_pred=y_pred3))
-
-                # r^2
-                r2_3 = r2_score(y_true=y_true, y_pred=y_pred3)
-                r2_2 = r2_score(y_true=y_true, y_pred=y_pred2)
-                r2_1 = r2_score(y_true=y_true, y_pred=y_pred1)
-
-                final_r2_list.append(r2_3)
-                diff_2_1_list.append(r2_2 - r2_1)
-                diff_3_2_list.append(r2_3 - r2_2)
-        return {
-            "avg_mse": round(np.mean(mse_list), 3),
-            "stdev_mse": round(np.std(mse_list), 3),
-            "avg_r2": round(np.mean(final_r2_list), 4),
-            "stdev_r2": round(np.std(final_r2_list), 4),
-            "avg_diff_2_1": round(np.mean(diff_2_1_list), 4),
-            "stdev_diff_2_1": round(np.std(diff_2_1_list), 4),
-            "avg_diff_3_2": round(np.mean(diff_3_2_list), 4),
-            "stdev_diff_3_2": round(np.std(diff_3_2_list), 4),
-            "l1_2": l1_2,
-            "alpha_2": alpha_2,
-            "l1_3": l1_3,
-            "alpha_3": alpha_3,
-        }
-
-    for alpha_dir in import_dir.iterdir():
-        alpha_list = alpha_dir.name.split("_")
-        if linear_type == "ridge":
-            # No l1 directory level for ridge.
-            combo_stats = eval_combo(
-                alpha_list=alpha_list,
-                l1_list=None,
-                score_root_dir=alpha_dir,
-            )
-            mse_condition = (
-                combo_stats["avg_mse"] < best_params_score_dict_mse["avg_mse"]
-            )
-            r2_condition = combo_stats["avg_r2"] > best_params_score_dict_r2["avg_r2"]
-            if mse_condition:
-                best_params_score_dict_mse = combo_stats.copy()
-            if r2_condition:
-                best_params_score_dict_r2 = combo_stats.copy()
-
-        else:  # elastic
-            for l1_dir in alpha_dir.iterdir():
-                l1_list = l1_dir.name.split("_")
-                combo_stats = eval_combo(
-                    alpha_list=alpha_list,
-                    l1_list=l1_list,
-                    score_root_dir=l1_dir,
-                )
-                mse_condition = (
-                    combo_stats["avg_mse"] < best_params_score_dict_mse["avg_mse"]
-                )
-                r2_condition = (
-                    combo_stats["avg_r2"] > best_params_score_dict_r2["avg_r2"]
-                )
-                if mse_condition:
-                    best_params_score_dict_mse = combo_stats.copy()
-
-                if r2_condition:
-                    best_params_score_dict_r2 = combo_stats.copy()
-
-    return {"mse": best_params_score_dict_mse, "r2": best_params_score_dict_r2}
-
-
-def get_r2_by_outcome(pred_dir, outcomes, nlayers, metric_agg):
-    result_list = []
-    for outcome_name in outcomes:
-        if nlayers == 2:
-            glob_pattern = "repeat_*"
-        else:  # 3 layers
-            glob_pattern = "*/*/repeat_*"
-        mse_list = []
-        r2_3_list = []
-        r2_1_list = []
-        pred_dir_outcome = pred_dir / outcome_name
-        for repeat_dir in pred_dir_outcome.glob(glob_pattern):
-            if metric_agg == "per_fold":
-                for split_file in repeat_dir.iterdir():
-                    df_import = pd.read_parquet(split_file)
-                    y_true = df_import["true"]
-
-                    # Preds at each layer
-                    y_pred1 = df_import["pred_stage1"]
-                    y_pred2 = df_import["pred_stage2_total"]
-                    y_pred3 = df_import["pred_stage3_total"]
-
-                    # SE avg
-                    mse = mean_squared_error(y_true=y_true, y_pred=y_pred3)
-                    ## r^2
-                    r2_3 = r2_score(y_true=y_true, y_pred=y_pred3)
-                    r2_2 = r2_score(y_true=y_true, y_pred=y_pred2)
-                    r2_1 = r2_score(y_true=y_true, y_pred=y_pred1)
-                    r2_1_list.append(r2_1)
-                    r2_3_list.append(r2_3)
-                    mse_list.append(mse)
-            elif metric_agg == "combined":  # combined
-                df_list = []
-                for split_file in repeat_dir.iterdir():
-                    df_import = pd.read_parquet(split_file)
-                    df_list.append(df_import)
-                df_combined = pd.concat(df_list)
-                y_true = df_combined["true"]
-
-                # Preds at each layer
-                y_pred1 = df_combined["pred_stage1"]
-                y_pred2 = df_combined["pred_stage2_total"]
-                y_pred3 = df_combined["pred_stage3_total"]
-
-                # SE avg
-                mse = mean_squared_error(y_true=y_true, y_pred=y_pred3)
-                ## r^2
-                r2_3 = r2_score(y_true=y_true, y_pred=y_pred3)
-                r2_2 = r2_score(y_true=y_true, y_pred=y_pred2)
-                r2_1 = r2_score(y_true=y_true, y_pred=y_pred1)
-                r2_1_list.append(r2_1)
-                r2_3_list.append(r2_3)
-                mse_list.append(mse)
-            else:
-                raise ValueError(f"Unrecognized metric_agg param: {metric_agg}")
-
-        avg_mse = np.mean(mse_list)
-
-        avg_r2_L1 = np.mean(r2_1_list)
-        stdev_r2_L1 = np.std(r2_1_list)
-
-        avg_r2_outcome = np.mean(r2_3_list)
-        stdev_r2_outcome = np.std(r2_3_list)
-        result_list.append(
-            {
-                "outcome": outcome_name,
-                "avg_r2_L1": f"{avg_r2_L1:.3f} ({stdev_r2_L1:.3f})",
-                "avg_r2_outcome": f"{avg_r2_outcome:.3f} ({stdev_r2_outcome:.3f})",
-            }
-        )
-    return (
-        pd.DataFrame(result_list)
-        .sort_values(by="avg_r2_outcome", ascending=False)
-        .reset_index(drop=True)
-    )
-
-
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="residual_preds",
@@ -443,6 +231,12 @@ def build_parser():
         required=True,
         choices=["reduced", "block", "avg", "max", "binary", "proba-limited"],
     )
+    parser.add_argument(
+        "--desc_seg_type",
+        required=True,
+        choices=["pt_noshort", "turns", "new", "expanded", "original", "combined"],
+    )
+
     parser.add_argument("--df_path", required=True)
     parser.add_argument("--base_save_dir", required=True)
     parser.add_argument("--alpha_list", required=False, nargs="+", default=ALPHA_LIST)
@@ -534,6 +328,7 @@ def main(argv=None):
         loop_through_resid_params(
             impact_type=args.impact_type,
             agg_type=args.agg_type,
+            desc_seg_type=args.desc_seg_type,
             df_path=Path(args.df_path),
             base_save_dir=save_dir,
             num_layers=args.num_layers,
@@ -559,6 +354,7 @@ def main(argv=None):
             loop_through_resid_params(
                 impact_type=args.impact_type,
                 agg_type=args.agg_type,
+                desc_seg_type=args.desc_seg_type,
                 df_path=Path(args.df_path),
                 base_save_dir=save_dir,
                 num_layers=args.num_layers,
@@ -575,65 +371,13 @@ def main(argv=None):
                 n_jobs=args.n_jobs,
                 shuffle=shuffle,
             )
-    ## TODO: how to reconcile this w/ perms?
+    ## TODO: Remove?
     if args.tune == "True":
-        relative_save_dir = save_dir.relative_to(BASE_PATH)
+        pass
         if impactme_outcome_list is None:
-            # This runs to get best alpha/l1 for each impact/agg/model/desc_seg combo
-            linear_type = relative_save_dir.parts[2]
-            agg_type = relative_save_dir.parts[3]
-            impact_type = relative_save_dir.parts[4]
-            model_name = relative_save_dir.parts[5]
-            # desc for 0-shot, seg for others
-            desc_seg_type = relative_save_dir.parts[6]
-            print("\t RUNNING REGULAR TUNER...")
-            best_params_dict = get_best_params_score(
-                import_dir=save_dir,
-                num_layers=args.num_layers,
-                linear_type=args.linear_type,
-                metric_agg=args.metric_agg,
-            )
-            param_save_path = (
-                BASE_PATH
-                / "initial_results"
-                / args.metric_agg
-                / f"{args.num_layers}_layers"
-                / linear_type
-                / "best_params"
-                / agg_type
-                / impact_type
-                / model_name
-                / f"{desc_seg_type}.json"
-            )
-            param_save_path.parent.mkdir(exist_ok=True, parents=True)
-            with open(param_save_path, "w") as f:
-                json.dump(best_params_dict, f, indent=4)
+            pass
         else:
-            # This runs to aggregate r2 in all outcomes for each impact/agg/n_layers combo
-            print("\t Getting r2 by outcome...")
-            r2_by_outcome_df = get_r2_by_outcome(
-                pred_dir=save_dir,
-                outcomes=impactme_outcome_list,
-                nlayers=args.num_layers,
-                metric_agg=args.metric_agg,
-            )
-            linear_type = relative_save_dir.parts[2]
-            agg_type = relative_save_dir.parts[3]
-            impact_type = relative_save_dir.parts[4]
-            save_path = (
-                BASE_PATH
-                / "outcome_analysis"
-                / "outcome_tables"
-                / linear_type
-                / agg_type
-                / impact_type
-                / f"{args.num_layers}_layers.tsv"
-            )
-            if save_path.exists():
-                save_path.unlink()
-            save_path.parent.mkdir(exist_ok=True, parents=True)
-            r2_by_outcome_df.to_csv(save_path, sep="\t")
-        print("\t DONE!")
+            pass
 
 
 if __name__ == "__main__":

@@ -87,9 +87,7 @@ def format_folder(n):
         return f"perm_{n}"
 
 
-def write_dirs(
-    start_perm, end_perm, parent_df, self_df, save_dir, start_seed, add_baseline
-):
+def write_dirs(start_perm, end_perm, save_dir, start_seed, add_baseline):
     """
     For each of num_perm permutations:
         - ensure permutation dir does not exist
@@ -103,8 +101,6 @@ def write_dirs(
     num_perm: int
         Number of permutations
         num_perm + 1 folders will be created
-    parent_df: pandas DF
-    self_df: pandas DF
     save_dir: pathlib Path
         Directory where permutation folders are written to
     start_seed: int
