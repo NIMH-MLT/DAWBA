@@ -33,7 +33,7 @@ def loop_through_params(
     ------
     param_dict: dict{}
         layers: list[int]
-            [2,3]
+            [1,2,3]
         agg: str
             ['max', 'avg', etc]
         llama: str
@@ -137,7 +137,7 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
             for desc_seg in desc_seg_list:
                 alpha_list = (
                     param_dict["alpha"]
-                    if num_layers == 2
+                    if num_layers in [1, 2]
                     else [
                         f"{a2}_{a3}"
                         for a2, a3 in product(param_dict["alpha"], param_dict["alpha"])

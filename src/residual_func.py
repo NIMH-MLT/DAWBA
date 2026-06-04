@@ -5,6 +5,7 @@ from src.utils import (
     IMPACTME_OUTCOMES_SHOT,
     IMPACTME_OUTCOMES_LR,
     IMPACTME_OUTCOMES_FULL,
+    OUTCOMES_EXPAND,
 )
 import pandas as pd
 import numpy as np
@@ -17,6 +18,7 @@ from src.perm import create_perms
 class BaseRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
+        num_layers,
         impact_type,
         desc_seg_type,
         quest_cols,
@@ -30,6 +32,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         linear_type,
         max_iter=5000,
     ):
+        self.num_layers = num_layers
         self.impact_type = impact_type
         self.desc_seg_type = desc_seg_type
         self.quest_cols = quest_cols
@@ -44,179 +47,48 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         self.impactme_outcome = impactme_outcome
         self.perm_ids = None
 
+    def _build_X_blocks(self, X):
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError("X must be a pandas DataFrame")
+        quest_np = X[self.quest_cols].to_numpy(dtype=float)
+
+        quest_sum = quest_np.sum(axis=1, keepdims=True)
+
+        prob_cols = self._get_prob_col()
+        prob_vals = X[prob_cols].values
+        prob_vec = np.vstack(prob_vals).astype(float)
+
+        return quest_sum, quest_np, prob_vec
+
     def _get_prob_col(self):
         if self.agg_type in ["avg", "max", "block"]:
             return f"prob_vector_{self.agg_type}"
         elif self.agg_type in ["proba-limited", "binary"]:
             if self.desc_seg_type == "new":
-                if self.impact_type == "parent":
-                    return [  # all w/ abs(corr) > 0.1
-                        "a8",
-                        "f4",
-                        "b2",
-                        "d5",
-                        "f5",
-                        "a6",
-                        "e2",
-                        "a4",
-                        "a2",
-                        "e5",
-                        "d4",
-                        "f2",
-                        "f3",
-                        "c3",
-                        "a7",
-                        "g2",
-                    ]
-                else:
-                    return [  # all w/ abs(corr) > 0.1
-                        "f4",
-                        "f5",
-                        "e2",
-                        "d4",
-                        "a6",
-                        "d3",
-                        "a8",
-                        "e4",
-                        "d1",
-                        "a5",
-                        "a2",
-                        "c4",
-                        "b3",
-                    ]
+                return IMPACTME_OUTCOMES_FULL
             elif self.desc_seg_type == "expanded":
-                if self.impact_type == "parent":
-                    return [  # all w/ abs(corr) > 0.2
-                        "B9",
-                        "D9",
-                        "B1",
-                        "C12",
-                        "F2",
-                        "C1",
-                        "E3",
-                        "B10",
-                        "B14",
-                        "B13",
-                        "B12",
-                        "C14",
-                        "I2",
-                        "C8",
-                        "C13",
-                        "A2",
-                        "F1",
-                        "D8",
-                        "D5",
-                    ]
-                else:
-                    return [  # all w/ abs(corr) > 0.2
-                        "B12",
-                        "C13",
-                        "F5",
-                        "C12",
-                        "B4",
-                        "D10",
-                        "B1",
-                        "G4",
-                        "C14",
-                        "B10",
-                        "B14",
-                        "B13",
-                        "D8",
-                        "C6",
-                        "C10",
-                    ]
+                return OUTCOMES_EXPAND
             elif self.desc_seg_type == "original":
                 return IMPACTME_OUTCOMES_SHOT
             elif self.desc_seg_type == "combined":  # combines expanded + original
-                if self.impact_type == "parent":
-                    return [  # all w/ abs(corr) > 0.2
-                        "B9_expand",
-                        "D9_expand",
-                        "B1_expand",
-                        "C12_expand",
-                        "a6_impactme",
-                        "F2_expand",
-                        "C1_expand",
-                        "E3_expand",
-                        "B10_expand",
-                        "B14_expand",
-                        "B13_expand",
-                        "B12_expand",
-                        "d4_impactme",
-                        "e1_impactme",
-                        "C14_expand",
-                        "I2_expand",
-                        "C8_expand",
-                        "C13_expand",
-                        "A2_expand",
-                        "d3_impactme",
-                        "F1_expand",
-                        "D8_expand",
-                        "D5_expand",
-                    ]
-                else:  # self
-                    return [  # all w/ abs(corr) >= 0.15
-                        "B12_expand",
-                        "C13_expand",
-                        "F5_expand",
-                        "C12_expand",
-                        "B4_expand",
-                        "D10_expand",
-                        "B1_expand",
-                        "G4_expand",
-                        "C14_expand",
-                        "B10_expand",
-                        "B14_expand",
-                        "B13_expand",
-                        "D8_expand",
-                        "C6_expand",
-                        "a6_impactme",
-                        "C10_expand",
-                        "a5_impactme",
-                        "d4_impactme",
-                        "B9_expand",
-                        "A3_expand",
-                        "F2_expand",
-                        "C5_expand",
-                        "B8_expand",
-                        "H3_expand",
-                        "A2_expand",
-                        "G5_expand",
-                        "I1_expand",
-                        "d6_impactme",
-                        "E3_expand",
-                        "B17_expand",
-                        "c1_impactme",
-                    ]
+                return [f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT] + [
+                    f"{col}_expand" for col in OUTCOMES_EXPAND
+                ]
             else:
                 raise ValueError(f"Unrecognized desc_seg_type: {self.desc_seg_type}")
         raise ValueError(f"Unrecognized agg_type: {self.agg_type}")
 
-    def _build_X_blocks(self, X):
-        if not isinstance(X, pd.DataFrame):
-            raise TypeError("X must be a pandas DataFrame")
-
-        quest_np = X[self.quest_cols].to_numpy(dtype=float)
-        quest_sum = quest_np.sum(axis=1, keepdims=True)
-
-        prob_cols = self._get_prob_col()
-
-        if self.impactme_outcome is not None:
-            pass
-            # TODO: single outcome prediction
-            # if self.agg_type in ["avg", "max", "block"]:
-            #     # LR output doesnt have a8,e3,34
-            #     outcome_idx = IMPACTME_OUTCOMES_LR.index(self.impactme_outcome)
-            # else:
-            #     # Use all outcomes
-            #     outcome_idx = IMPACTME_OUTCOMES_SHOT.index(self.impactme_outcome)
-            # # extract single probability
-            # prob_vals = X[prob_col].str[outcome_idx].values
-        else:
-            # consider probability of all outcomes
-            prob_vals = X[prob_cols].values
-        prob_vec = np.vstack(prob_vals).astype(float)
-        return quest_sum, quest_np, prob_vec
+    def _get_coef_df(self):
+        parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
+        if self.num_layers == 1:
+            return pd.concat(parts, ignore_index=True)
+        ## 2/3 layers
+        parts.append(self._extract_coefs(self.stage3_, self._feat3, "stage3"))
+        if self.num_layers == 3:
+            # only add stage2 info if 3 layers
+            # stage2 info == stage1 info when 2 layers
+            parts.append(self._extract_coefs(self.stage2_, self._feat2, "stage2"))
+        return pd.concat(parts, ignore_index=True)
 
     def _make_model(self, alpha, l1_ratio, model_type):
         """
@@ -287,12 +159,83 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         return pred_df["pred_stage3_total"].to_numpy()
 
 
-class ResidualRegressor(BaseRegressor):
-    def __init__(self, num_layers, **kwargs):
-        if num_layers not in [2, 3]:
-            raise ValueError(f"Num layers must be one of [2,3]. Got {num_layers}")
+class IndependentRegressor(BaseRegressor):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.num_layers = num_layers
+
+    def fit(self, X, y, shuffle=None, perm_dir=None):
+        """
+        Create linear/ridge regression for each layer individually
+        Layer1--> Use sum scores to predict raw impact
+        Layer2--> Use granular questionnaire response to predict raw impact
+        Layer3--> Use text probs to predict raw impact
+        *NOTE: # use alpha3/l1_ratio3 for both questionnaire and text models
+        """
+        y = np.asarray(y, dtype=float)
+        X1, X2, X3 = self._build_X_blocks(X)
+
+        if shuffle is not None:
+            raise ValueError(f"Single model does not accept shuffling. Got: {shuffle}")
+        self.perm_ids = X["DAWBA_ID"].values
+
+        # Build feature name lists
+        self._feat1 = ["sum_score"]
+        self._feat2 = list(self.quest_cols)
+        prob_cols = self._get_prob_col()
+
+        if self.agg_type in ["avg", "max", "block"]:
+            # LR output doesnt have a8,e3,34
+            self._feat3 = IMPACTME_OUTCOMES_LR
+        else:
+            self._feat3 = prob_cols
+
+        ## Layer 1 — Sum scores
+        self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
+        self.stage1_.fit(X1, y)
+
+        ## Layer 2 - Granular Questionnaire
+        self.stage2_ = self._make_model(
+            alpha=self.alpha3,
+            l1_ratio=self.l1_ratio3,
+            model_type=self.linear_type,
+        )
+        self.stage2_.fit(X2, y)
+
+        ## Layer 3 - Text probs
+        self.stage3_ = self._make_model(
+            alpha=self.alpha3,
+            l1_ratio=self.l1_ratio3,
+            model_type=self.linear_type,
+        )
+        self.stage3_.fit(X3, y)
+        return self
+
+    def predict_all(self, X):
+        """
+        Returns all stage predictions and cumulative totals in a DataFrame.
+        """
+        X1, X2, X3 = self._build_X_blocks(X)
+
+        pred1 = self.stage1_.predict(X1)
+        pred2 = self.stage2_.predict(X2)
+        pred3 = self.stage3_.predict(X3)
+
+        return pd.DataFrame(
+            {
+                "pred_stage1": pred1,
+                "pred_stage2_total": pred2,
+                "pred_stage3_total": pred3,
+            }
+        )
+
+
+class ResidualRegressor(BaseRegressor):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.num_layers not in [2, 3]:
+            raise ValueError(
+                f"Num layers must be one of [2,3] for ResidualRegressor. Got {self.num_layers}"
+            )
 
     def fit(self, X, y, shuffle=None, perm_dir=None):
         """
@@ -376,14 +319,6 @@ class ResidualRegressor(BaseRegressor):
         self.pred3_train_ = self.stage3_.predict(X3)
         return self
 
-    def get_coef_df(self):
-        parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
-        # Only emit stage2 if it was independently fitted (3-layer mode)
-        if self.num_layers == 3:
-            parts.append(self._extract_coefs(self.stage2_, self._feat2, "stage2"))
-        parts.append(self._extract_coefs(self.stage3_, self._feat3, "stage3"))
-        return pd.concat(parts, ignore_index=True)
-
     def predict_all(self, X):
         """
         Returns all stage predictions and cumulative totals in a DataFrame.
@@ -452,6 +387,7 @@ def get_lr_output(
 
     ## ============> Modeling
     shared_args = dict(
+        num_layers=num_layers,
         impact_type=impact_type,
         quest_cols=quest_cols,
         agg_type=agg_type,
@@ -466,17 +402,16 @@ def get_lr_output(
         desc_seg_type=desc_seg_type,
     )
     if num_layers == 1:
-        pass
-        # model = IndependentRegressor(**shared_args)
+        model = IndependentRegressor(**shared_args)
     else:
-        model = ResidualRegressor(num_layers=num_layers, **shared_args)
+        model = ResidualRegressor(**shared_args)
 
     model.fit(train_reset, y_train, shuffle=hypothesis_shuffle, perm_dir=perm_dir)
 
     pred_df = model.predict_all(test_reset)
 
     # ── Coefficients ──────────────────────────────────────────────────────────
-    coef_df = model.get_coef_df()
+    coef_df = model._get_coef_df()
     coef_df["split_id"] = split_id  # tag with fold so rows stay traceable
 
     # ── Permutation IDs ───────────────────────────────────────────────────────
@@ -509,83 +444,3 @@ def get_lr_output(
             }
         )
     return perm_id_df, output_df, coef_df
-
-
-# class IndependentRegressor(BaseRegressor):
-#     def __init__(self, **kwargs):
-#         super().__init__(**kwargs)
-
-#     def fit(self, X, y, shuffle=None, perm_dir=None):
-#         """
-#         No longer residual-- predict raw impact with each of X1, X2, X3
-
-#         Layer1--> Use sum scores to predict raw impact
-#         Layer2--> Use questionnaire responses to predict raw impact
-#         Layer3--> Use text probs to predict raw impact
-
-#         NOTE: Uses l1_ratio/alpha 3 for both questionnaire and text models
-#         """
-#         y = np.asarray(y, dtype=float)
-#         X1, X2, X3 = self._build_X_blocks(X)
-#         if shuffle == "text":
-#             # shuffle text layer inputs (ONLY IN TRAIN)
-#             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
-#         elif shuffle is None:
-#             self.perm_ids = X["DAWBA_ID"].values
-#         else:
-#             raise ValueError(
-#                 f"Unrecognized `shuffle` in fit method: {shuffle}. Must be one of ['text', None]"
-#             )
-
-#         # Build feature name lists — stored so get_coef_df() can use them
-#         self._feat1 = ["sum_score"]
-#         self._feat2 = list(self.quest_cols)
-#         prob_col = self._get_prob_col()
-#         n_prob = X3.shape[1]
-#         if self.agg_type in ["avg", "max", "block"]:
-#             # LR output doesnt have a8,e3,34
-#             self._feat3 = IMPACTME_OUTCOMES_LR
-#         else:
-#             self._feat3 = IMPACTME_OUTCOMES_SHOT
-
-#         # Sum scores
-#         self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
-#         self.stage1_.fit(X1, y)
-#         self.pred1_train_ = self.stage1_.predict(X1)
-#         # Questionnaire responses
-#         self.stage2_ = self._make_model(
-#             alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type=self.linear_type
-#         )
-#         self.stage2_.fit(X2, y)
-#         self.pred2_train_ = self.stage2_.predict(X2)
-#         # Text responses
-#         self.stage3_ = self._make_model(
-#             alpha=self.alpha3, l1_ratio=self.l1_ratio3, model_type=self.linear_type
-#         )
-#         self.stage3_.fit(X3, y)
-#         self.pred3_train_ = self.stage3_.predict(X3)
-#         return self
-
-#     def get_coef_df(self):
-#         parts = [
-#             self._extract_coefs(self.stage1_, self._feat1, "stage1"),
-#             self._extract_coefs(self.stage2_, self._feat2, "stage2"),
-#             self._extract_coefs(self.stage3_, self._feat3, "stage3"),
-#         ]
-#         return pd.concat(parts, ignore_index=True)
-
-#     def predict_all(self, X):
-#         """
-#         Predict with each model independently
-#         """
-#         X1, X2, X3 = self._build_X_blocks(X)
-#         pred1 = self.stage1_.predict(X1)
-#         pred2 = self.stage2_.predict(X2)
-#         pred3 = self.stage3_.predict(X3)
-#         return pd.DataFrame(
-#             {
-#                 "pred_stage1": pred1,
-#                 "pred_stage2_total": pred2,
-#                 "pred_stage3_total": pred3,
-#             }
-#         )
