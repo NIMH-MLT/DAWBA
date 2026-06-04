@@ -134,6 +134,7 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                 if agg_type in ["max", "avg", "block"]
                 else param_dict["desc"]
             )
+            two_layer_base_list = ["S", "Q"] if num_layers == 2 else ["None"]
             for desc_seg in desc_seg_list:
                 alpha_list = (
                     param_dict["alpha"]
@@ -144,40 +145,43 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                     ]
                 )
                 for alpha in alpha_list:
-                    import_dir = (
-                        base_import_dir
-                        / f"{num_layers}_layers"
-                        / "ridge"
-                        / agg_type
-                        / impact_type
-                        / llama_model
-                        / desc_seg
-                        / f"alpha_{alpha}"
-                        / f"repeat_{repeat}"
-                    )
+                    for two_layer_base in two_layer_base_list:
+                        import_dir = (
+                            base_import_dir
+                            / f"{num_layers}_layers"
+                            / "ridge"
+                            / agg_type
+                            / impact_type
+                            / llama_model
+                            / desc_seg
+                            / f"alpha_{alpha}"
+                            / f"repeat_{repeat}"
+                            / f"2_layer_base_{two_layer_base}"
+                        )
 
-                    # ── shared config labels ──────────────────────────────────
-                    meta = dict(
-                        repeat=repeat,
-                        num_layers=num_layers,
-                        agg_type=agg_type,
-                        llama_model=llama_model,
-                        desc_seg=desc_seg,
-                        alpha=str(alpha),
-                    )
+                        # ── shared config labels ──────────────────────────────────
+                        meta = dict(
+                            repeat=repeat,
+                            num_layers=num_layers,
+                            agg_type=agg_type,
+                            llama_model=llama_model,
+                            desc_seg=desc_seg,
+                            alpha=str(alpha),
+                            two_layer_base=two_layer_base,
+                        )
 
-                    ## Preds ##
-                    df_preds = pd.read_parquet(import_dir / "output_preds.parquet")
-                    pred_list.append(df_preds.assign(**meta))
+                        ## Preds ##
+                        df_preds = pd.read_parquet(import_dir / "output_preds.parquet")
+                        pred_list.append(df_preds.assign(**meta))
 
-                    ## IDs ##
-                    df_ids = pd.read_parquet(import_dir / "perm_ids.parquet")
-                    id_check_list.append(df_ids)
-                    id_list.append(df_ids.assign(**meta))
+                        ## IDs ##
+                        df_ids = pd.read_parquet(import_dir / "perm_ids.parquet")
+                        id_check_list.append(df_ids)
+                        id_list.append(df_ids.assign(**meta))
 
-                    ## Coefs ##
-                    df_coefs = pd.read_parquet(import_dir / "coefs.parquet")
-                    coef_list.append(df_coefs.assign(**meta))
+                        ## Coefs ##
+                        df_coefs = pd.read_parquet(import_dir / "coefs.parquet")
+                        coef_list.append(df_coefs.assign(**meta))
 
         # Ensure permuted IDs are consistent across all model configurations for this repeat
         assert all(id_check_list[0].equals(s) for s in id_check_list)

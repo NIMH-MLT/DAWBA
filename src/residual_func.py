@@ -14,6 +14,8 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import ElasticNet, LinearRegression, Ridge
 from src.perm import create_perms
 
+## TODO: rename stage1, stage2, etc to stageSum, stageQuest, etc for readability
+
 
 class BaseRegressor(BaseEstimator, RegressorMixin):
     def __init__(
@@ -230,11 +232,18 @@ class IndependentRegressor(BaseRegressor):
 
 
 class ResidualRegressor(BaseRegressor):
-    def __init__(self, **kwargs):
+    def __init__(self, two_layer_base, **kwargs):
         super().__init__(**kwargs)
         if self.num_layers not in [2, 3]:
             raise ValueError(
                 f"Num layers must be one of [2,3] for ResidualRegressor. Got {self.num_layers}"
+            )
+        self.two_layer_base = two_layer_base
+        if (self.two_layer_base is not None and self.num_layers != 2) or (
+            self.num_layers == 2 and self.two_layer_base is None
+        ):
+            raise ValueError(
+                f"two_layer_base must be not None exactly when num_layers=2. Got: two_layer_base:{self.two_layer_base}; num_layers:{self.num_layers}"
             )
 
     def fit(self, X, y, shuffle=None, perm_dir=None):
@@ -290,14 +299,32 @@ class ResidualRegressor(BaseRegressor):
 
         else:  # num_layers = 2
             """
-            -- DROP granular questionnaire layer
-            Layer2--> Copy of layer1
-            Layer3--> Use probs derived from open text repsonses to predict layer2 residuals (same as layer1)
+            if two_layer_base = S:
+                - use sum layer (layer1) residuals (resid1 == resid2) for text layer (layer3) model
+                - questionnaire layer (layer2) will be copy of sum layer (layer1)
+            if two_layer_base = Q:
+                - questionnaire predicts made on raw impact
+                - use questionnaire layer (layer2) residuals (resid2) for text layer (layer3) model
+                - questionnaire layer (layer2) will be independent of sum layer (layer1)
             """
             ## Layer2
-            self.stage2_ = self.stage1_
-            self.pred2_train_ = self.pred1_train_
-            resid2 = resid1
+            if self.two_layer_base == "S":
+                self.stage2_ = self.stage1_
+                self.pred2_train_ = self.pred1_train_
+                resid2 = resid1
+            elif self.two_layer_base == "Q":
+                self.stage2_ = self._make_model(
+                    alpha=self.alpha3,
+                    l1_ratio=self.l1_ratio3,
+                    model_type=self.linear_type,
+                )
+                self.stage2_.fit(X2, y)
+                self.pred2_train_ = self.stage2_.predict(X2)
+                resid2 = y - self.pred2_train_
+            else:
+                raise ValueError(
+                    f"two_layer_base must be one of ['S', 'Q']. Got: {self.two_layer_base}"
+                )
 
         ## Layer 3 — Text probabilities
         if self.impactme_outcome is not None:
@@ -324,11 +351,17 @@ class ResidualRegressor(BaseRegressor):
         Returns all stage predictions and cumulative totals in a DataFrame.
         """
         X1, X2, X3 = self._build_X_blocks(X)
-
-        pred1 = self.stage1_.predict(X1)
-        pred2 = (
-            self.stage2_.predict(X2) if self.num_layers == 3 else np.zeros(len(pred1))
-        )
+        num_preds = len(X1)
+        if self.num_layers == 3:
+            pred1 = self.stage1_.predict(X1)
+            pred2 = self.stage2_.predict(X2)
+        else:  # 2 layers
+            if self.two_layer_base == "S":
+                pred1 = self.stage1_.predict(X1)
+                pred2 = np.zeros(num_preds)
+            else:  # Q
+                pred1 = np.zeros(num_preds)
+                pred2 = self.stage2_.predict(X2)
 
         # Use layer 3 to predict layer 2 residuals
         pred2_total = pred1 + pred2
@@ -360,6 +393,7 @@ def get_lr_output(
     seed,
     linear_type,  # ridge
     perm_dir,
+    two_layer_base,  # first estimator type for 2 layer iteration; one of 'Q', 'T'
     hypothesis_shuffle=None,  # None, 'text'. ' or 'resid1'
 ):
     quest_cols = col_config_sensitivity[f"{impact_type.lower()}_quest"]
@@ -404,7 +438,7 @@ def get_lr_output(
     if num_layers == 1:
         model = IndependentRegressor(**shared_args)
     else:
-        model = ResidualRegressor(**shared_args)
+        model = ResidualRegressor(**shared_args, two_layer_base=two_layer_base)
 
     model.fit(train_reset, y_train, shuffle=hypothesis_shuffle, perm_dir=perm_dir)
 
