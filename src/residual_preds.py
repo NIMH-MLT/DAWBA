@@ -3,6 +3,7 @@ from .config import SEED, BASE_PATH
 from .utils import L1_LIST, ALPHA_LIST
 from .residual_func import get_lr_output
 import json
+import ast
 import pandas as pd
 from pathlib import Path
 import argparse
@@ -92,7 +93,9 @@ def loop_through_resid_params(
     num_layers,
     linear_type,
     perm_dir,
-    two_layer_base=None,
+    pca_k_list,
+    pca_scale,
+    two_layer_base_val=None,
     shuffle=None,
     impactme_outcome=None,
     alpha_list=ALPHA_LIST,
@@ -113,11 +116,11 @@ def loop_through_resid_params(
     l1_values = l1_list if linear_type == "elastic" else [None]
 
     def loop_through_splits(
-        selected_alphas, selected_l1s, df_w_splits, two_layer_base_val=None
+        selected_alphas, selected_l1s, df_w_splits, pca_k, two_layer_base_val=None
     ):
         perm_id_list = []
         output_df_list = []
-        coef_df_list = []  # NEW
+        coef_df_list = []
         for split_id in range(n_splits):
             perm_id_df, output_df, coef_df = get_lr_output(  # unpack 3 values
                 df=df_w_splits,
@@ -134,6 +137,8 @@ def loop_through_resid_params(
                 agg_type=agg_type,
                 linear_type=linear_type,
                 perm_dir=perm_dir,
+                pca_k=pca_k,
+                pca_scale=pca_scale,
                 hypothesis_shuffle=shuffle,
             )
             perm_id_list.append(perm_id_df)
@@ -159,106 +164,99 @@ def loop_through_resid_params(
         )
         if impactme_outcome is not None:
             # ImpactMe outcome iteration
-            if num_layers == 2:
-                # No alpha/l1 sweep here
-                selected_alphas = [None, None]
-                selected_l1s = [None, None]
-                export_dir = base_save_dir / impactme_outcome / f"repeat_{repeat}"
-                combined_perm_ids, combined_output_df, combined_coef_df = (
-                    loop_through_splits(selected_alphas, selected_l1s, df_w_splits)
-                )
-            else:
-                # num_layers == 3
-                for alpha_2 in alpha_list:
-                    selected_alphas = [alpha_2, None]
-                    selected_l1s = [None, None]
-                    export_dir = (
-                        base_save_dir
-                        / impactme_outcome
-                        / f"alpha_{alpha_2}"
-                        / f"repeat_{repeat}"
-                    )
-                    combined_perm_ids, combined_output_df, combined_coef_df = (
-                        loop_through_splits(selected_alphas, selected_l1s, df_w_splits)
-                    )
-        else:
-            # Regular iteration
-            if num_layers == 1:
-                two_layer_base_val = None
-                for alpha_3 in alpha_list:
-                    selected_alphas = [None, alpha_3]
-                    selected_l1s = [None, None]
-                    export_dir = (
-                        base_save_dir
-                        / f"alpha_{alpha_3}"
-                        / f"repeat_{repeat}"
-                        / f"2_layer_base_{two_layer_base_val}"
-                    )
-                    combined_perm_ids, combined_output_df, combined_coef_df = (
-                        loop_through_splits(
-                            selected_alphas,
-                            selected_l1s,
-                            df_w_splits,
-                            two_layer_base_val,
-                        )
-                    )
-                    export_dfs(
-                        combined_perm_ids=combined_perm_ids,
-                        combined_output_df=combined_output_df,
-                        combined_coef_df=combined_coef_df,
-                        save_dir=export_dir,
-                    )
-            elif num_layers == 2:
-                for two_layer_base_val in ["S", "Q"]:
-                    for alpha_3 in alpha_list:
-                        selected_alphas = [None, alpha_3]
-                        selected_l1s = [None, None]
-                        export_dir = (
-                            base_save_dir
-                            / f"alpha_{alpha_3}"
-                            / f"repeat_{repeat}"
-                            / f"2_layer_base_{two_layer_base_val}"
-                        )
-                        combined_perm_ids, combined_output_df, combined_coef_df = (
-                            loop_through_splits(
-                                selected_alphas,
-                                selected_l1s,
-                                df_w_splits,
-                                two_layer_base_val,
+            pass
+            # TODO: remove?
+        else:  # Regular iteration
+            for pca_k in pca_k_list:
+                if num_layers == 1:
+                    two_layer_base_val = None
+                    for l1_3 in l1_values:
+                        for alpha_3 in alpha_list:
+                            selected_alphas = [None, alpha_3]
+                            selected_l1s = [None, l1_3]
+                            export_dir = (
+                                base_save_dir
+                                / f"alpha_{alpha_3}"
+                                / f"l1_{l1_3}"
+                                / f"repeat_{repeat}"
+                                / f"2_layer_base_{two_layer_base_val}"
+                                / f"select_{pca_k}_{pca_scale}"
                             )
-                        )
-                        export_dfs(
-                            combined_perm_ids=combined_perm_ids,
-                            combined_output_df=combined_output_df,
-                            combined_coef_df=combined_coef_df,
-                            save_dir=export_dir,
-                        )
-
-            else:  # num_layers == 3
-                two_layer_base_val = None
-                for alpha_2, alpha_3 in product(alpha_list, alpha_list):
-                    selected_alphas = [alpha_2, alpha_3]
-                    selected_l1s = [None, None]
-                    export_dir = (
-                        base_save_dir
-                        / f"alpha_{alpha_2}_{alpha_3}"
-                        / f"repeat_{repeat}"
-                        / f"2_layer_base_{two_layer_base_val}"
-                    )
-                    combined_perm_ids, combined_output_df, combined_coef_df = (
-                        loop_through_splits(
-                            selected_alphas,
-                            selected_l1s,
-                            df_w_splits,
-                            two_layer_base_val,
-                        )
-                    )
-                    export_dfs(
-                        combined_perm_ids=combined_perm_ids,
-                        combined_output_df=combined_output_df,
-                        combined_coef_df=combined_coef_df,  # NEW
-                        save_dir=export_dir,
-                    )
+                            combined_perm_ids, combined_output_df, combined_coef_df = (
+                                loop_through_splits(
+                                    selected_alphas,
+                                    selected_l1s,
+                                    df_w_splits,
+                                    pca_k,
+                                    two_layer_base_val,
+                                )
+                            )
+                            export_dfs(
+                                combined_perm_ids=combined_perm_ids,
+                                combined_output_df=combined_output_df,
+                                combined_coef_df=combined_coef_df,
+                                save_dir=export_dir,
+                            )
+                elif num_layers == 2:
+                    for two_layer_base_val in ["S", "Q"]:
+                        for l1_3 in l1_values:
+                            for alpha_3 in alpha_list:
+                                selected_alphas = [None, alpha_3]
+                                selected_l1s = [None, l1_3]
+                                export_dir = (
+                                    base_save_dir
+                                    / f"alpha_{alpha_3}"
+                                    / f"l1_{l1_3}"
+                                    / f"repeat_{repeat}"
+                                    / f"2_layer_base_{two_layer_base_val}"
+                                    / f"select_{pca_k}_{pca_scale}"
+                                )
+                                (
+                                    combined_perm_ids,
+                                    combined_output_df,
+                                    combined_coef_df,
+                                ) = loop_through_splits(
+                                    selected_alphas,
+                                    selected_l1s,
+                                    df_w_splits,
+                                    pca_k,
+                                    two_layer_base_val,
+                                )
+                                export_dfs(
+                                    combined_perm_ids=combined_perm_ids,
+                                    combined_output_df=combined_output_df,
+                                    combined_coef_df=combined_coef_df,
+                                    save_dir=export_dir,
+                                )
+                else:  # num_layers == 3
+                    two_layer_base_val = None
+                    for l1_2, l1_3 in product(l1_values, l1_values):
+                        for alpha_2, alpha_3 in product(alpha_list, alpha_list):
+                            selected_alphas = [alpha_2, alpha_3]
+                            selected_l1s = [l1_2, l1_3]
+                            export_dir = (
+                                base_save_dir
+                                / f"alpha_{alpha_2}_{alpha_3}"
+                                / f"l1_{l1_2}_{l1_3}"
+                                / f"repeat_{repeat}"
+                                / f"2_layer_base_{two_layer_base_val}"
+                                / f"select_{pca_k}_{pca_scale}"
+                            )
+                            combined_perm_ids, combined_output_df, combined_coef_df = (
+                                loop_through_splits(
+                                    selected_alphas,
+                                    selected_l1s,
+                                    df_w_splits,
+                                    pca_k,
+                                    two_layer_base_val,
+                                )
+                            )
+                            export_dfs(
+                                combined_perm_ids=combined_perm_ids,
+                                combined_output_df=combined_output_df,
+                                combined_coef_df=combined_coef_df,
+                                save_dir=export_dir,
+                            )
     return None
 
 
@@ -284,11 +282,11 @@ def build_parser():
         choices=["pt_noshort", "turns", "new", "expanded", "original", "combined"],
     )
 
-    parser.add_argument("--df_path", required=True)
-    parser.add_argument("--base_save_dir", required=True)
+    parser.add_argument("--df_path", required=True, type=Path)
+    parser.add_argument("--base_save_dir", required=True, type=Path)
     parser.add_argument("--alpha_list", required=False, nargs="+", default=ALPHA_LIST)
     parser.add_argument("--l1_list", required=False, nargs="+", default=L1_LIST)
-    parser.add_argument("--perm_dir", required=True)
+    parser.add_argument("--perm_dir", required=True, type=Path)
     parser.add_argument("--linear_type", required=True, choices=["elastic", "ridge"])
     parser.add_argument("--shuffle", required=True, choices=["text", "none"])
     parser.add_argument(
@@ -352,13 +350,19 @@ def build_parser():
         help="Whether or not to get best params",
         default="False",
     )
+    parser.add_argument("--pca_k_list", required=True, type=ast.literal_eval)
+    parser.add_argument(
+        "--pca_scale", required=True, type=str, choices=["True", "False"]
+    )
     return parser
 
 
 def main(argv=None):
     ## Parse args
     args = build_parser().parse_args(argv)
-    perm_dir = Path(args.perm_dir)
+    ## PCA args
+    pca_scale = True if args.pca_scale == "True" else False
+    ## Lists
     alpha_list = (
         None if args.alpha_list == ["None"] else [float(a) for a in args.alpha_list]
     )
@@ -366,63 +370,53 @@ def main(argv=None):
     impactme_outcome_list = (
         None if args.impactme_outcome_list == ["None"] else args.impactme_outcome_list
     )
-    ## Brute force preds
-    save_dir = Path(args.base_save_dir)
     ## Perm shuffle str
     if args.shuffle == "none":
         shuffle = None
     else:
         shuffle = args.shuffle
+    shared_args = dict(
+        impact_type=args.impact_type,
+        agg_type=args.agg_type,
+        desc_seg_type=args.desc_seg_type,
+        df_path=args.df_path,
+        base_save_dir=args.base_save_dir,
+        num_layers=args.num_layers,
+        alpha_list=alpha_list,
+        l1_list=l1_list,
+        perm_dir=args.perm_dir,
+        linear_type=args.linear_type,
+        two_layer_base=args.two_layer_base,
+        max_iter=args.max_iter,
+        seed=args.seed,
+        n_repeats=args.n_repeats,
+        split_tol=args.split_tol,
+        n_splits=args.n_splits,
+        n_jobs=args.n_jobs,
+        shuffle=shuffle,
+        pca_k_list=args.pca_k_list,
+        pca_scale=pca_scale,
+    )
     if impactme_outcome_list is None:
         # This runs to get raw preds on each param combo
         loop_through_resid_params(
-            impact_type=args.impact_type,
-            agg_type=args.agg_type,
-            desc_seg_type=args.desc_seg_type,
-            df_path=Path(args.df_path),
-            base_save_dir=save_dir,
-            num_layers=args.num_layers,
-            alpha_list=alpha_list,
-            l1_list=l1_list,
-            perm_dir=perm_dir,
-            linear_type=args.linear_type,
+            **shared_args,
             impactme_outcome=None,
-            two_layer_base=args.two_layer_base,
-            max_iter=args.max_iter,
-            seed=args.seed,
-            n_repeats=args.n_repeats,
-            split_tol=args.split_tol,
-            n_splits=args.n_splits,
-            n_jobs=args.n_jobs,
-            shuffle=shuffle,
         )
     else:
-        print(
-            f"\t Running per outcome for agg: {args.agg_type}, impact: {args.impact_type}..."
-        )
-        # This runs to get raw preds w/ each impactme outcome as sole predictor
-        for outcome_name in impactme_outcome_list:
-            loop_through_resid_params(
-                impact_type=args.impact_type,
-                agg_type=args.agg_type,
-                desc_seg_type=args.desc_seg_type,
-                df_path=Path(args.df_path),
-                base_save_dir=save_dir,
-                num_layers=args.num_layers,
-                alpha_list=alpha_list,
-                l1_list=l1_list,
-                perm_dir=perm_dir,
-                impactme_outcome=outcome_name,
-                two_layer_base=args.two_layer_base,
-                linear_type=args.linear_type,
-                max_iter=args.max_iter,
-                seed=args.seed,
-                n_repeats=args.n_repeats,
-                split_tol=args.split_tol,
-                n_splits=args.n_splits,
-                n_jobs=args.n_jobs,
-                shuffle=shuffle,
-            )
+        pass
+    # TODO: Do we even need this?
+    # print(
+    #     f"\t Running per outcome for agg: {args.agg_type}, impact: {args.impact_type}..."
+    # )
+    # # This runs to get raw preds w/ each impactme outcome as sole predictor
+    # for outcome_name in impactme_outcome_list:
+    #     loop_through_resid_params(
+    #         **shared_args,
+    #         pca_k=pca_k,
+    #         pca_scale=pca_scale,
+    #         impactme_outcome=outcome_name,
+    #     )
     ## TODO: Remove?
     if args.tune == "True":
         pass

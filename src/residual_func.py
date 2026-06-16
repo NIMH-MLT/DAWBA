@@ -7,14 +7,30 @@ from src.utils import (
     IMPACTME_OUTCOMES_FULL,
     OUTCOMES_EXPAND,
 )
+from src.perm import create_perms
+
 import pandas as pd
 import numpy as np
 
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import ElasticNet, LinearRegression, Ridge
-from src.perm import create_perms
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 ## TODO: rename stage1, stage2, etc to stageSum, stageQuest, etc for readability
+
+
+class _CoefHolder:
+    """
+    Minimal model-like object carrying back-mapped stage3 coefficients.
+    Allows _extract_coefs to work without modification after PCA back-mapping.
+    coef_ shape: (p,) — one weight per original probability feature.
+    intercept_ shape: (1,) — scalar intercept, wrapped in array for consistency.
+    """
+
+    def __init__(self, coef_, intercept_):
+        self.coef_ = np.asarray(coef_).flatten()
+        self.intercept_ = np.atleast_1d(intercept_)
 
 
 class BaseRegressor(BaseEstimator, RegressorMixin):
@@ -32,6 +48,8 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         seed,
         impactme_outcome,
         linear_type,
+        pca_k=None,  # can be int for # of PCs or float for % var explained or None for no PCA
+        pca_scale=None,  # whether or not to apply standard scaling before PCA
         max_iter=5000,
     ):
         self.num_layers = num_layers
@@ -47,7 +65,71 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         self.seed = seed
         self.linear_type = linear_type
         self.impactme_outcome = impactme_outcome
+        self.pca_k = pca_k
+        self.pca_scale = pca_scale
         self.perm_ids = None
+
+    def _fit_pca(self, X3):
+        """
+        Fit PCA (and optionally StandardScaler) on X3 train, return scores
+        Called once during fit(), stores self.pca_ and (and optionally self.pca_scaler_)
+        If self.pca_k is None, returns X3 unchanged
+        """
+        if self.pca_k is None:
+            return X3
+        if self.pca_scale:
+            self.pca_scaler_ = StandardScaler().fit(X3)
+            X3 = self.pca_scaler_.transform(X3)
+        self.pca_ = PCA(n_components=self.pca_k).fit(X3)
+        X3_pcs = self.pca_.transform(X3)
+        return X3_pcs
+
+    def _transform_pca(self, X3):
+        """
+        Apply fitted PCA (and optional scaler) to X3 test.
+        If self.pca_k is None, return X3 unchanged.
+        Similar to _fit_pca() w/o PCA/Scaler fitting.
+        """
+        if self.pca_k is None:
+            return X3
+        if self.pca_scale:
+            X3 = self.pca_scaler_.transform(X3)
+        X3_pcs = self.pca_.transform(X3)
+        return X3_pcs
+
+    def _finalize_stage3_coefs(self):
+        """
+        After stage3_ (text) is fitted on PCA scores,back-map regression weights
+        to original feat space and store self._stage3_coef_rep fot use in get_coef_df
+
+        If pca_k is None, self._stage3_coef_rep aliases stage3_ directly.
+
+        Backmapping:
+            w_caled
+        """
+        if self.pca_k is None:
+            self._stage3_coef_rep = self.stage3_
+            return
+        # loading matrix w/ dimension (#PCs, #feats)
+        V = self.pca_.components_
+        # weights assigned to each PC
+        beta = np.atleast_1d(self.stage3_.coef_).flatten()
+        # weights transformed back to original input space
+        w = V.T @ beta
+        # original intercept
+        intercept = np.atleast_1d(self.stage3_.intercept_).flatten()[0]
+        if self.pca_scale:
+            # undo StandardScaler
+            w_raw = w / self.pca_scaler_.scale_
+            intercept -= np.sum(w_raw * self.pca_scaler_.mean_)
+        else:
+            w_raw = w
+
+        assert len(w_raw) == len(
+            self._feat3
+        ), f"Back-mapped weights ({len(w_raw)} don't match _feat3 ({len(self._feat3)}))"
+
+        self._stage3_coef_rep = _CoefHolder(w_raw, intercept)
 
     def _build_X_blocks(self, X):
         if not isinstance(X, pd.DataFrame):
@@ -70,7 +152,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
                 return IMPACTME_OUTCOMES_FULL
             elif self.desc_seg_type == "expanded":
                 return OUTCOMES_EXPAND
-            elif self.desc_seg_type == "original":
+            elif self.desc_seg_type in ["original", "augment_neg", "augment"]:
                 return IMPACTME_OUTCOMES_SHOT
             elif self.desc_seg_type == "combined":  # combines expanded + original
                 return [f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT] + [
@@ -80,12 +162,12 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
                 raise ValueError(f"Unrecognized desc_seg_type: {self.desc_seg_type}")
         raise ValueError(f"Unrecognized agg_type: {self.agg_type}")
 
-    def _get_coef_df(self):
+    def get_coef_df(self):
         parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
         if self.num_layers == 1:
             return pd.concat(parts, ignore_index=True)
         ## 2/3 layers
-        parts.append(self._extract_coefs(self.stage3_, self._feat3, "stage3"))
+        parts.append(self._extract_coefs(self._stage3_coef_rep, self._feat3, "stage3"))
         if self.num_layers == 3:
             # only add stage2 info if 3 layers
             # stage2 info == stage1 info when 2 layers
@@ -171,7 +253,8 @@ class IndependentRegressor(BaseRegressor):
         Layer1--> Use sum scores to predict raw impact
         Layer2--> Use granular questionnaire response to predict raw impact
         Layer3--> Use text probs to predict raw impact
-        *NOTE: # use alpha3/l1_ratio3 for both questionnaire and text models
+        *NOTE: use alpha3/l1_ratio3 for both questionnaire and text models
+        *NOTE: PCA can optionally be applied to layer3
         """
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
@@ -204,12 +287,14 @@ class IndependentRegressor(BaseRegressor):
         self.stage2_.fit(X2, y)
 
         ## Layer 3 - Text probs
+        X3 = self._fit_pca(X3)  # will not use PCA if self.pca_k is None
         self.stage3_ = self._make_model(
             alpha=self.alpha3,
             l1_ratio=self.l1_ratio3,
             model_type=self.linear_type,
         )
         self.stage3_.fit(X3, y)
+        self._finalize_stage3_coefs()  # map coefs back to og feat space if PCA used
         return self
 
     def predict_all(self, X):
@@ -217,6 +302,7 @@ class IndependentRegressor(BaseRegressor):
         Returns all stage predictions and cumulative totals in a DataFrame.
         """
         X1, X2, X3 = self._build_X_blocks(X)
+        X3 = self._transform_pca(X3)  # will not use PCA if self.pca_k is None
 
         pred1 = self.stage1_.predict(X1)
         pred2 = self.stage2_.predict(X2)
@@ -254,6 +340,7 @@ class ResidualRegressor(BaseRegressor):
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
 
+        ## Shuffle before PCA
         if shuffle == "text":
             # shuffle text layer inputs (ONLY IN TRAIN)
             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
@@ -287,7 +374,6 @@ class ResidualRegressor(BaseRegressor):
             Layer2--> Use granular questionnaire responses to predict layer 1 residuals
             Layer3--> Use probs derived from open text responses to predict layer 2 residuals
             """
-            ## Layer 2
             self.stage2_ = self._make_model(
                 alpha=self.alpha2,
                 l1_ratio=self.l1_ratio2,
@@ -326,12 +412,14 @@ class ResidualRegressor(BaseRegressor):
                     f"two_layer_base must be one of ['S', 'Q']. Got: {self.two_layer_base}"
                 )
 
-        ## Layer 3 — Text probabilities
+        ## Layer 3 — Text probabilities (optional PCA)
+        X3 = self._fit_pca(X3)  # PCA not used if self.pca_k is None
         if self.impactme_outcome is not None:
-            # Train with regular univariable Linear Regression
-            self.stage3_ = self._make_model(
-                alpha=None, l1_ratio=None, model_type="regular"
-            )
+            pass  # TODO: do we even need this?
+            # # Train with regular univariable Linear Regression
+            # self.stage3_ = self._make_model(
+            #     alpha=None, l1_ratio=None, model_type="regular"
+            # )
         else:
             ## Train with elastic net
             self.stage3_ = self._make_model(
@@ -344,6 +432,7 @@ class ResidualRegressor(BaseRegressor):
         except ValueError:
             print(X3)
         self.pred3_train_ = self.stage3_.predict(X3)
+        self._finalize_stage3_coefs()
         return self
 
     def predict_all(self, X):
@@ -351,6 +440,8 @@ class ResidualRegressor(BaseRegressor):
         Returns all stage predictions and cumulative totals in a DataFrame.
         """
         X1, X2, X3 = self._build_X_blocks(X)
+        X3 = self._transform_pca(X3)  # PCA not used if self.pca_k is None
+
         num_preds = len(X1)
         if self.num_layers == 3:
             pred1 = self.stage1_.predict(X1)
@@ -394,6 +485,8 @@ def get_lr_output(
     linear_type,  # ridge
     perm_dir,
     two_layer_base,  # first estimator type for 2 layer iteration; one of 'Q', 'T'
+    pca_k=None,  # None to disable; int/float to enable
+    pca_scale=True,  # standardize
     hypothesis_shuffle=None,  # None, 'text'. ' or 'resid1'
 ):
     quest_cols = col_config_sensitivity[f"{impact_type.lower()}_quest"]
@@ -434,6 +527,8 @@ def get_lr_output(
         impactme_outcome=impactme_outcome,
         linear_type=linear_type,
         desc_seg_type=desc_seg_type,
+        pca_k=pca_k,
+        pca_scale=pca_scale,
     )
     if num_layers == 1:
         model = IndependentRegressor(**shared_args)
@@ -445,7 +540,7 @@ def get_lr_output(
     pred_df = model.predict_all(test_reset)
 
     # ── Coefficients ──────────────────────────────────────────────────────────
-    coef_df = model._get_coef_df()
+    coef_df = model.get_coef_df()
     coef_df["split_id"] = split_id  # tag with fold so rows stay traceable
 
     # ── Permutation IDs ───────────────────────────────────────────────────────

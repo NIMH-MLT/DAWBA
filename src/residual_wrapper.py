@@ -46,6 +46,13 @@ def loop_through_params(
             [0.5, 1.0, etc]
         impact_type: str
             One of ['parent', 'self']
+        pca_k_list: list[Any]
+            Float denotes PCA w/ % var explained
+            Int denotes PCA w/ k chosen PCs
+            None denotes no PCA
+        pca_scale: Boolean
+            Whether or not to use Standard Scaler on factors before PCA
+            Not used if pca_k is None for a given iteration
     df_dir: pathlib.Path
         Path to dir of base df containing X (Questionnaire/Text probs) and y (impact score) data
     scratch_dir: pathlib.Path
@@ -98,9 +105,10 @@ def loop_through_params(
                 df_path=df_path,
                 base_save_dir=save_dir,  # sctratch dir where results temporarily written to
                 alpha_list=param_dict["alpha"],
-                l1_list=[None],
+                l1_list=param_dict["l1"],
                 perm_dir=perm_dir,  # actual perm dir where results eventually saved & seed.txt file exists
                 linear_type="ridge",
+                # linear_type="elastic",
                 impactme_outcome=None,
                 max_iter=config_dict["max_iter"],
                 seed=config_dict["seed"],
@@ -109,6 +117,8 @@ def loop_through_params(
                 n_splits=config_dict["n_splits"],
                 n_jobs=config_dict["n_jobs"],
                 shuffle=config_dict["shuffle"],
+                pca_k_list=param_dict["pca_k_list"],
+                pca_scale=param_dict["pca_scale"],
             )
 
 
@@ -118,6 +128,8 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
     Labels each sub-df with relevant config values + repeat iteration.
     Also aggregates coefs.parquet alongside preds and perm IDs.
     """
+    pca_k_list = param_dict["pca_k_list"]
+    pca_scale = param_dict["pca_scale"]
     pred_list = []
     id_list = []
     coef_list = []
@@ -144,44 +156,63 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                         for a2, a3 in product(param_dict["alpha"], param_dict["alpha"])
                     ]
                 )
-                for alpha in alpha_list:
-                    for two_layer_base in two_layer_base_list:
-                        import_dir = (
-                            base_import_dir
-                            / f"{num_layers}_layers"
-                            / "ridge"
-                            / agg_type
-                            / impact_type
-                            / llama_model
-                            / desc_seg
-                            / f"alpha_{alpha}"
-                            / f"repeat_{repeat}"
-                            / f"2_layer_base_{two_layer_base}"
-                        )
+                l1_list = (
+                    param_dict["l1"]
+                    if num_layers in [1, 2]
+                    else [
+                        f"{a2}_{a3}"
+                        for a2, a3 in product(param_dict["l1"], param_dict["l1"])
+                    ]
+                )
+                for l1 in l1_list:
+                    for alpha in alpha_list:
+                        for pca_k in pca_k_list:
+                            for two_layer_base in two_layer_base_list:
+                                import_dir = (
+                                    base_import_dir
+                                    / f"{num_layers}_layers"
+                                    / "ridge"
+                                    / agg_type
+                                    / impact_type
+                                    / llama_model
+                                    / desc_seg
+                                    / f"alpha_{alpha}"
+                                    / f"l1_{l1}"
+                                    / f"repeat_{repeat}"
+                                    / f"2_layer_base_{two_layer_base}"
+                                    / f"select_{pca_k}_{pca_scale}"
+                                )
 
-                        # ── shared config labels ──────────────────────────────────
-                        meta = dict(
-                            repeat=repeat,
-                            num_layers=num_layers,
-                            agg_type=agg_type,
-                            llama_model=llama_model,
-                            desc_seg=desc_seg,
-                            alpha=str(alpha),
-                            two_layer_base=two_layer_base,
-                        )
+                                # ── shared config labels ──────────────────────────────────
+                                meta = dict(
+                                    repeat=repeat,
+                                    num_layers=num_layers,
+                                    agg_type=agg_type,
+                                    llama_model=llama_model,
+                                    desc_seg=desc_seg,
+                                    alpha=str(alpha),
+                                    l1=str(l1),
+                                    two_layer_base=two_layer_base,
+                                    pca_k=pca_k,
+                                    pca_scale=pca_scale,
+                                )
 
-                        ## Preds ##
-                        df_preds = pd.read_parquet(import_dir / "output_preds.parquet")
-                        pred_list.append(df_preds.assign(**meta))
+                                ## Preds ##
+                                df_preds = pd.read_parquet(
+                                    import_dir / "output_preds.parquet"
+                                )
+                                pred_list.append(df_preds.assign(**meta))
 
-                        ## IDs ##
-                        df_ids = pd.read_parquet(import_dir / "perm_ids.parquet")
-                        id_check_list.append(df_ids)
-                        id_list.append(df_ids.assign(**meta))
+                                ## IDs ##
+                                df_ids = pd.read_parquet(
+                                    import_dir / "perm_ids.parquet"
+                                )
+                                id_check_list.append(df_ids)
+                                id_list.append(df_ids.assign(**meta))
 
-                        ## Coefs ##
-                        df_coefs = pd.read_parquet(import_dir / "coefs.parquet")
-                        coef_list.append(df_coefs.assign(**meta))
+                                ## Coefs ##
+                                df_coefs = pd.read_parquet(import_dir / "coefs.parquet")
+                                coef_list.append(df_coefs.assign(**meta))
 
         # Ensure permuted IDs are consistent across all model configurations for this repeat
         assert all(id_check_list[0].equals(s) for s in id_check_list)
@@ -226,6 +257,12 @@ def main(argv=None):
     args.config_dict["shuffle"] = (
         None if args.config_dict["shuffle"] == "none" else args.config_dict["shuffle"]
     )
+    args.param_dict["pca_k_list"] = [
+        None if val == "none" else val for val in args.param_dict["pca_k_list"]
+    ]
+    args.param_dict["l1"] = [
+        None if val == "none" else val for val in args.param_dict["l1"]
+    ]
     # This runs to get raw preds on each param combo
     print("Looping through params...")
     loop_through_params(
