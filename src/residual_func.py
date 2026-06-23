@@ -259,9 +259,16 @@ class IndependentRegressor(BaseRegressor):
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
 
-        if shuffle is not None:
-            raise ValueError(f"Single model does not accept shuffling. Got: {shuffle}")
-        self.perm_ids = X["DAWBA_ID"].values
+        # if shuffle is not None:
+        #     raise ValueError(f"Single model does not accept shuffling. Got: {shuffle}")
+        if shuffle == "text":
+            X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
+        elif shuffle is None:
+            self.perm_ids = X["DAWBA_ID"].values
+        else:
+            raise ValueError(
+                f"Unrecognized `shuffle` in fit method: {shuffle}. Must be one of ['text', None]"
+            )
 
         # Build feature name lists
         self._feat1 = ["sum_score"]
@@ -342,7 +349,7 @@ class ResidualRegressor(BaseRegressor):
 
         ## Shuffle before PCA
         if shuffle == "text":
-            # shuffle text layer inputs (ONLY IN TRAIN)
+            # only shuffle text in TRAIN
             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
         elif shuffle is None:
             self.perm_ids = X["DAWBA_ID"].values

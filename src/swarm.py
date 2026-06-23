@@ -61,21 +61,14 @@ def run_outcome_swarm(swarm_log_dir, cmd_dir, agg_types):
         subprocess.run(swarm_cmd, shell=True)
 
 
-def run_perm_r2_swarm(impact_list, layer_list, log_dir, cmd_dir, n_batch_for_3=3):
+def run_perm_r2_swarm(impact_list, log_dir, cmd_dir, swarm_time, n_batch, partition):
     for impact_type in impact_list:
-        for num_layers in layer_list:
-            swarm_log_dir = log_dir / f"{impact_type}_{num_layers}"
-            swarm_path = cmd_dir / f"{impact_type}_{num_layers}.swarm"
-            if num_layers == 2:
-                swarm_time = "0:5:00"
-                n_batch = int(n_batch_for_3 * 2)
-            else:
-                swarm_time = "0:10:00"
-                n_batch = n_batch_for_3
-            gb = 6
-            num_threads = 6
-            swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={swarm_log_dir}  --job-name=perm_r2_{impact_type}_{num_layers} --partition=norm -b {n_batch} {swarm_path}"
-            subprocess.run(swarm_cmd, shell=True)
+        swarm_log_dir = log_dir / impact_type
+        swarm_path = cmd_dir / f"{impact_type}.swarm"
+        gb = 6
+        num_threads = 6
+        swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={swarm_log_dir}  --job-name=perm_r2_{impact_type} --partition={partition} -b {n_batch} {swarm_path}"
+        subprocess.run(swarm_cmd, shell=True)
 
 
 ####################################################
