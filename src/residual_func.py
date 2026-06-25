@@ -1,5 +1,4 @@
 ## residual_func.py
-from .config import SEED
 from src.utils import (
     col_config_sensitivity,
     IMPACTME_OUTCOMES_SHOT,
@@ -13,24 +12,9 @@ import pandas as pd
 import numpy as np
 
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.linear_model import ElasticNet, LinearRegression, Ridge
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression, Ridge
 
 ## TODO: rename stage1, stage2, etc to stageSum, stageQuest, etc for readability
-
-
-class _CoefHolder:
-    """
-    Minimal model-like object carrying back-mapped stage3 coefficients.
-    Allows _extract_coefs to work without modification after PCA back-mapping.
-    coef_ shape: (p,) — one weight per original probability feature.
-    intercept_ shape: (1,) — scalar intercept, wrapped in array for consistency.
-    """
-
-    def __init__(self, coef_, intercept_):
-        self.coef_ = np.asarray(coef_).flatten()
-        self.intercept_ = np.atleast_1d(intercept_)
 
 
 class BaseRegressor(BaseEstimator, RegressorMixin):
@@ -42,14 +26,9 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         quest_cols,
         agg_type,
         alpha2,
-        l1_ratio2,
         alpha3,
-        l1_ratio3,
         seed,
-        impactme_outcome,
         linear_type,
-        pca_k=None,  # can be int for # of PCs or float for % var explained or None for no PCA
-        pca_scale=None,  # whether or not to apply standard scaling before PCA
         max_iter=5000,
     ):
         self.num_layers = num_layers
@@ -58,78 +37,11 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         self.quest_cols = quest_cols
         self.agg_type = agg_type
         self.alpha2 = alpha2
-        self.l1_ratio2 = l1_ratio2
-        self.alpha3 = alpha3
-        self.l1_ratio3 = l1_ratio3
         self.max_iter = max_iter
         self.seed = seed
         self.linear_type = linear_type
-        self.impactme_outcome = impactme_outcome
-        self.pca_k = pca_k
-        self.pca_scale = pca_scale
+        self.alpha3 = alpha3
         self.perm_ids = None
-
-    def _fit_pca(self, X3):
-        """
-        Fit PCA (and optionally StandardScaler) on X3 train, return scores
-        Called once during fit(), stores self.pca_ and (and optionally self.pca_scaler_)
-        If self.pca_k is None, returns X3 unchanged
-        """
-        if self.pca_k is None:
-            return X3
-        if self.pca_scale:
-            self.pca_scaler_ = StandardScaler().fit(X3)
-            X3 = self.pca_scaler_.transform(X3)
-        self.pca_ = PCA(n_components=self.pca_k).fit(X3)
-        X3_pcs = self.pca_.transform(X3)
-        return X3_pcs
-
-    def _transform_pca(self, X3):
-        """
-        Apply fitted PCA (and optional scaler) to X3 test.
-        If self.pca_k is None, return X3 unchanged.
-        Similar to _fit_pca() w/o PCA/Scaler fitting.
-        """
-        if self.pca_k is None:
-            return X3
-        if self.pca_scale:
-            X3 = self.pca_scaler_.transform(X3)
-        X3_pcs = self.pca_.transform(X3)
-        return X3_pcs
-
-    def _finalize_stage3_coefs(self):
-        """
-        After stage3_ (text) is fitted on PCA scores,back-map regression weights
-        to original feat space and store self._stage3_coef_rep fot use in get_coef_df
-
-        If pca_k is None, self._stage3_coef_rep aliases stage3_ directly.
-
-        Backmapping:
-            w_caled
-        """
-        if self.pca_k is None:
-            self._stage3_coef_rep = self.stage3_
-            return
-        # loading matrix w/ dimension (#PCs, #feats)
-        V = self.pca_.components_
-        # weights assigned to each PC
-        beta = np.atleast_1d(self.stage3_.coef_).flatten()
-        # weights transformed back to original input space
-        w = V.T @ beta
-        # original intercept
-        intercept = np.atleast_1d(self.stage3_.intercept_).flatten()[0]
-        if self.pca_scale:
-            # undo StandardScaler
-            w_raw = w / self.pca_scaler_.scale_
-            intercept -= np.sum(w_raw * self.pca_scaler_.mean_)
-        else:
-            w_raw = w
-
-        assert len(w_raw) == len(
-            self._feat3
-        ), f"Back-mapped weights ({len(w_raw)} don't match _feat3 ({len(self._feat3)}))"
-
-        self._stage3_coef_rep = _CoefHolder(w_raw, intercept)
 
     def _build_X_blocks(self, X):
         if not isinstance(X, pd.DataFrame):
@@ -167,27 +79,23 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         if self.num_layers == 1:
             return pd.concat(parts, ignore_index=True)
         ## 2/3 layers
-        parts.append(self._extract_coefs(self._stage3_coef_rep, self._feat3, "stage3"))
+        parts.append(self._extract_coefs(self.stage3_, self._feat3, "stage3"))
         if self.num_layers == 3:
             # only add stage2 info if 3 layers
             # stage2 info == stage1 info when 2 layers
             parts.append(self._extract_coefs(self.stage2_, self._feat2, "stage2"))
         return pd.concat(parts, ignore_index=True)
 
-    def _make_model(self, alpha, l1_ratio, model_type):
+    def _make_model(
+        self,
+        alpha,
+        model_type,
+    ):
         """
         model_type: str
             One of ['elastic', 'regular', 'ridge']
         """
-        if model_type == "elastic":
-            return ElasticNet(
-                alpha=alpha,
-                l1_ratio=l1_ratio,
-                fit_intercept=True,
-                max_iter=self.max_iter,
-                random_state=self.seed,
-            )
-        elif model_type == "ridge":
+        if model_type == "ridge":
             return Ridge(
                 alpha=alpha,
                 fit_intercept=True,
@@ -253,14 +161,11 @@ class IndependentRegressor(BaseRegressor):
         Layer1--> Use sum scores to predict raw impact
         Layer2--> Use granular questionnaire response to predict raw impact
         Layer3--> Use text probs to predict raw impact
-        *NOTE: use alpha3/l1_ratio3 for both questionnaire and text models
-        *NOTE: PCA can optionally be applied to layer3
+        *NOTE: use alpha3 for both questionnaire and text models
         """
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
 
-        # if shuffle is not None:
-        #     raise ValueError(f"Single model does not accept shuffling. Got: {shuffle}")
         if shuffle == "text":
             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
         elif shuffle is None:
@@ -282,26 +187,25 @@ class IndependentRegressor(BaseRegressor):
             self._feat3 = prob_cols
 
         ## Layer 1 — Sum scores
-        self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
+        self.stage1_ = self._make_model(
+            alpha=None,
+            model_type="regular",
+        )
         self.stage1_.fit(X1, y)
 
         ## Layer 2 - Granular Questionnaire
         self.stage2_ = self._make_model(
             alpha=self.alpha3,
-            l1_ratio=self.l1_ratio3,
             model_type=self.linear_type,
         )
         self.stage2_.fit(X2, y)
 
         ## Layer 3 - Text probs
-        X3 = self._fit_pca(X3)  # will not use PCA if self.pca_k is None
         self.stage3_ = self._make_model(
             alpha=self.alpha3,
-            l1_ratio=self.l1_ratio3,
             model_type=self.linear_type,
         )
         self.stage3_.fit(X3, y)
-        self._finalize_stage3_coefs()  # map coefs back to og feat space if PCA used
         return self
 
     def predict_all(self, X):
@@ -309,7 +213,6 @@ class IndependentRegressor(BaseRegressor):
         Returns all stage predictions and cumulative totals in a DataFrame.
         """
         X1, X2, X3 = self._build_X_blocks(X)
-        X3 = self._transform_pca(X3)  # will not use PCA if self.pca_k is None
 
         pred1 = self.stage1_.predict(X1)
         pred2 = self.stage2_.predict(X2)
@@ -347,7 +250,6 @@ class ResidualRegressor(BaseRegressor):
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
 
-        ## Shuffle before PCA
         if shuffle == "text":
             # only shuffle text in TRAIN
             X3 = self.shuffle_vals(X=X, col_to_shuffle_np=X3, perm_dir=perm_dir)
@@ -368,10 +270,12 @@ class ResidualRegressor(BaseRegressor):
             self._feat3 = IMPACTME_OUTCOMES_LR
         else:
             self._feat3 = prob_cols
-        # self._feat3 = IMPACTME_OUTCOMES_SHOT
 
         ## Layer 1 — Sum scores
-        self.stage1_ = self._make_model(alpha=None, l1_ratio=None, model_type="regular")
+        self.stage1_ = self._make_model(
+            alpha=None,
+            model_type="regular",
+        )
         self.stage1_.fit(X1, y)
         self.pred1_train_ = self.stage1_.predict(X1)
         resid1 = y - self.pred1_train_
@@ -383,7 +287,6 @@ class ResidualRegressor(BaseRegressor):
             """
             self.stage2_ = self._make_model(
                 alpha=self.alpha2,
-                l1_ratio=self.l1_ratio2,
                 model_type=self.linear_type,
             )
             self.stage2_.fit(X2, resid1)
@@ -408,7 +311,6 @@ class ResidualRegressor(BaseRegressor):
             elif self.two_layer_base == "Q":
                 self.stage2_ = self._make_model(
                     alpha=self.alpha3,
-                    l1_ratio=self.l1_ratio3,
                     model_type=self.linear_type,
                 )
                 self.stage2_.fit(X2, y)
@@ -419,27 +321,17 @@ class ResidualRegressor(BaseRegressor):
                     f"two_layer_base must be one of ['S', 'Q']. Got: {self.two_layer_base}"
                 )
 
-        ## Layer 3 — Text probabilities (optional PCA)
-        X3 = self._fit_pca(X3)  # PCA not used if self.pca_k is None
-        if self.impactme_outcome is not None:
-            pass  # TODO: do we even need this?
-            # # Train with regular univariable Linear Regression
-            # self.stage3_ = self._make_model(
-            #     alpha=None, l1_ratio=None, model_type="regular"
-            # )
-        else:
-            ## Train with elastic net
-            self.stage3_ = self._make_model(
-                alpha=self.alpha3,
-                l1_ratio=self.l1_ratio3,
-                model_type=self.linear_type,
-            )
+        ## Train with elastic net
+        self.stage3_ = self._make_model(
+            alpha=self.alpha3,
+            model_type=self.linear_type,
+        )
         try:
             self.stage3_.fit(X3, resid2)
-        except ValueError:
+        except ValueError as e:
             print(X3)
+            raise e
         self.pred3_train_ = self.stage3_.predict(X3)
-        self._finalize_stage3_coefs()
         return self
 
     def predict_all(self, X):
@@ -447,7 +339,6 @@ class ResidualRegressor(BaseRegressor):
         Returns all stage predictions and cumulative totals in a DataFrame.
         """
         X1, X2, X3 = self._build_X_blocks(X)
-        X3 = self._transform_pca(X3)  # PCA not used if self.pca_k is None
 
         num_preds = len(X1)
         if self.num_layers == 3:
@@ -483,18 +374,14 @@ def get_lr_output(
     desc_seg_type,
     num_layers,
     selected_alphas,
-    selected_l1s,
     split_id,
     impact_type,
-    impactme_outcome,
     max_iter,
     seed,
-    linear_type,  # ridge
     perm_dir,
     two_layer_base,  # first estimator type for 2 layer iteration; one of 'Q', 'T'
-    pca_k=None,  # None to disable; int/float to enable
-    pca_scale=True,  # standardize
-    hypothesis_shuffle=None,  # None, 'text'. ' or 'resid1'
+    linear_type="ridge",
+    hypothesis_shuffle=None,  # None, 'text'
 ):
     quest_cols = col_config_sensitivity[f"{impact_type.lower()}_quest"]
     ## Make prob cols granular ######################
@@ -526,16 +413,11 @@ def get_lr_output(
         quest_cols=quest_cols,
         agg_type=agg_type,
         alpha2=selected_alphas[0],
-        l1_ratio2=selected_l1s[0],
         alpha3=selected_alphas[1],
-        l1_ratio3=selected_l1s[1],
         max_iter=max_iter,
         seed=seed,
-        impactme_outcome=impactme_outcome,
         linear_type=linear_type,
         desc_seg_type=desc_seg_type,
-        pca_k=pca_k,
-        pca_scale=pca_scale,
     )
     if num_layers == 1:
         model = IndependentRegressor(**shared_args)

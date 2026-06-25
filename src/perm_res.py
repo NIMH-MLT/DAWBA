@@ -155,7 +155,6 @@ def get_collapsed_null(
         r2_df_2 = r2_df[(r2_df["num_layers"] == 2) & (r2_df["two_layer_base"] == "S")]
         r2_df_2["diff_ST_S"] = r2_df_2["r2_T_mean"] - r2_df_2["r2_S_mean"]
         r2_df_2["alpha"] = r2_df_2["alpha"] + "_" + r2_df_2["alpha"]
-        r2_df_2["l1"] = r2_df_2["l1"] + "_" + r2_df_2["l1"]
         r2_df_2.drop("two_layer_base", inplace=True, axis=1)
 
         ## Collapse hypothesis axis
@@ -185,9 +184,6 @@ def collapse_hypothesis(df1, df2, col1, col2, keep_cols):
         "llama_model",
         "desc_seg",
         "alpha",
-        "l1",
-        "pca_k",
-        "pca_scale",
     ]
     combined = pd.merge(
         df1,
@@ -270,10 +266,7 @@ def get_avg_r2(df):
         "llama_model",
         "desc_seg",
         "alpha",
-        "l1",
         "two_layer_base",
-        "pca_k",
-        "pca_scale",
     ]
     r2_df = (
         df.groupby(params + ["repeat"])
@@ -295,7 +288,6 @@ def ensure_consistent(id_df, num_layers, num_repeats=10, num_splits=3):
     of impact/num_layers.
     """
     id_df = id_df[id_df["num_layers"] == num_layers]
-    id_df["pca_k"] = id_df["pca_k"].fillna("None")
     col_list = [f"perm_id_split_{i}" for i in range(num_splits)]
     for repeat in range(num_repeats):
         repeat_df = id_df[id_df["repeat"] == repeat]
@@ -307,10 +299,7 @@ def ensure_consistent(id_df, num_layers, num_repeats=10, num_splits=3):
                     "llama_model",
                     "desc_seg",
                     "alpha",
-                    "l1",
                     "two_layer_base",
-                    "pca_k",
-                    "pca_scale",
                 ]
             )
         ]

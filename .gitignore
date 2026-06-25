@@ -2,32 +2,15 @@
 data/
 
 # Toy notebooks
-notebooks/0_exploration.ipynb
-notebooks/0_cv_splits.ipynb
-notebooks/0_tune_en_reduced.ipynb
-notebooks/0_shot_experiment.ipynb
+notebooks/old
 
 # Results
-initial_results*/
-initial_preds*/
-outcome_analysis/
-
+initial_everything/
 
 ## Extras
-src/__pycache__
-logs/
-block/
-*swarm_dir*/
 */__pycache__/
-linear_preds/
-preds/
-old_preds/
-sig_tests/
-sig_tests_reverse/
-perm_res_old/
-perm_res_old2/
+swarm_dir/
 perm_res/
-notebooks/old/
-
-*scratch*/
+perm_res_final/
+src/old
 tests/
