@@ -11,7 +11,7 @@ def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
     if agg_type in ["avg", "max", "block"]:
         intermediate_dir = "w_probs"
     elif agg_type in ["binary", "proba-limited"]:
-        intermediate_dir = f"w_0_shot_probs_sep_cols/temp_0.6/{agg_type}"
+        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
     else:
         raise ValueError(f"Unreccognized agg type: {agg_type}")
     return (

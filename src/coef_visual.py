@@ -37,7 +37,7 @@ def plot_heatmap(
     )
     abs_max = pivot.abs().max().max()
     fig, ax = plt.subplots(
-        figsize=(len(pivot.columns) * 0.8 + 1, max(12, len(pivot.index) * 0.4 + 2)),
+        figsize=(len(pivot.columns) + 10, max(12, len(pivot.index) * 0.6 + 2)),
         constrained_layout=True,
     )
     sns.heatmap(

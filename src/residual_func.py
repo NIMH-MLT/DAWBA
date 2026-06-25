@@ -50,29 +50,32 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
 
         quest_sum = quest_np.sum(axis=1, keepdims=True)
 
-        prob_cols = self._get_prob_col()
-        prob_vals = X[prob_cols].values
+        prob_col, prob_outcomes = self._get_prob_col_outcomes()
+        prob_vals = X[prob_outcomes].values
         prob_vec = np.vstack(prob_vals).astype(float)
 
         return quest_sum, quest_np, prob_vec
 
-    def _get_prob_col(self):
+    def _get_prob_col_outcomes(self):
         if self.agg_type in ["avg", "max", "block"]:
-            return f"prob_vector_{self.agg_type}"
+            return f"prob_vector_{self.agg_type}", IMPACTME_OUTCOMES_LR
         elif self.agg_type in ["proba-limited", "binary"]:
+            prob_col = "open_text_block_0_shot"
             if self.desc_seg_type == "new":
-                return IMPACTME_OUTCOMES_FULL
+                prob_outcomes = IMPACTME_OUTCOMES_FULL
             elif self.desc_seg_type == "expanded":
-                return OUTCOMES_EXPAND
+                prob_outcomes = OUTCOMES_EXPAND
             elif self.desc_seg_type in ["original", "augment_neg", "augment"]:
-                return IMPACTME_OUTCOMES_SHOT
+                prob_outcomes = IMPACTME_OUTCOMES_SHOT
             elif self.desc_seg_type == "combined":  # combines expanded + original
-                return [f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT] + [
-                    f"{col}_expand" for col in OUTCOMES_EXPAND
-                ]
+                prob_outcomes = [
+                    f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT
+                ] + [f"{col}_expand" for col in OUTCOMES_EXPAND]
             else:
                 raise ValueError(f"Unrecognized desc_seg_type: {self.desc_seg_type}")
-        raise ValueError(f"Unrecognized agg_type: {self.agg_type}")
+        else:
+            raise ValueError(f"Unrecognized agg_type: {self.agg_type}")
+        return prob_col, prob_outcomes
 
     def get_coef_df(self):
         parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
@@ -150,6 +153,15 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         pred_df = self.predict_all(X)
         return pred_df["pred_stage3_total"].to_numpy()
 
+    def expand_text(self, df):
+        prob_col, prob_outcomes = self._get_prob_col_outcomes()
+        new_cols = pd.DataFrame(
+            df[prob_col].tolist(), columns=prob_outcomes, index=df.index
+        )
+        df = df.join(new_cols)
+        df = df.drop(columns=prob_col)
+        return df
+
 
 class IndependentRegressor(BaseRegressor):
     def __init__(self, **kwargs):
@@ -178,13 +190,7 @@ class IndependentRegressor(BaseRegressor):
         # Build feature name lists
         self._feat1 = ["sum_score"]
         self._feat2 = list(self.quest_cols)
-        prob_cols = self._get_prob_col()
-
-        if self.agg_type in ["avg", "max", "block"]:
-            # LR output doesnt have a8,e3,34
-            self._feat3 = IMPACTME_OUTCOMES_LR
-        else:
-            self._feat3 = prob_cols
+        _, self._feat3 = self._get_prob_col_outcomes()
 
         ## Layer 1 — Sum scores
         self.stage1_ = self._make_model(
@@ -263,13 +269,7 @@ class ResidualRegressor(BaseRegressor):
         # Build feature name lists
         self._feat1 = ["sum_score"]
         self._feat2 = list(self.quest_cols)
-        prob_cols = self._get_prob_col()
-
-        if self.agg_type in ["avg", "max", "block"]:
-            # LR output doesnt have a8,e3,34
-            self._feat3 = IMPACTME_OUTCOMES_LR
-        else:
-            self._feat3 = prob_cols
+        _, self._feat3 = self._get_prob_col_outcomes()
 
         ## Layer 1 — Sum scores
         self.stage1_ = self._make_model(
@@ -383,34 +383,11 @@ def get_lr_output(
     linear_type="ridge",
     hypothesis_shuffle=None,  # None, 'text'
 ):
-    quest_cols = col_config_sensitivity[f"{impact_type.lower()}_quest"]
-    ## Make prob cols granular ######################
-    ## TODO: Use this instead of granularizing myself
-    # new_cols = pd.DataFrame(
-    #     df["open_text_block_0_shot"].tolist(),
-    #     columns=IMPACTME_OUTCOMES_FULL,
-    #     index=df.index,
-    # )
-    # df = df.join(new_cols)
-    # df = df.drop(columns="open_text_block_0_shot")
-    ########################################
-    # ================> Get X_train, y_train, X_test, y_test
-    test_set = df[df["split_id"] == split_id]
-    train_set = df[df["split_id"] != split_id]
-    assert len(df) != 0
-    assert len(test_set) + len(train_set) == len(df)
-    ## ========> Set up Train + Test
-    train_reset = train_set.reset_index(drop=True)
-    test_reset = test_set.reset_index(drop=True)
-    # y
-    y_train = train_reset[f"impact_score_{impact_type}"]
-    y_test = test_reset[f"impact_score_{impact_type}"]
-
-    ## ============> Modeling
-    shared_args = dict(
+    # ================> Set up model
+    model_args = dict(
         num_layers=num_layers,
         impact_type=impact_type,
-        quest_cols=quest_cols,
+        quest_cols=col_config_sensitivity[f"{impact_type.lower()}_quest"],
         agg_type=agg_type,
         alpha2=selected_alphas[0],
         alpha3=selected_alphas[1],
@@ -420,25 +397,41 @@ def get_lr_output(
         desc_seg_type=desc_seg_type,
     )
     if num_layers == 1:
-        model = IndependentRegressor(**shared_args)
+        model = IndependentRegressor(**model_args)
     else:
-        model = ResidualRegressor(**shared_args, two_layer_base=two_layer_base)
+        model = ResidualRegressor(**model_args, two_layer_base=two_layer_base)
 
+    # ================> Set up data
+    # Expand text prob vectors to make probs granular cols
+    df_expand = model.expand_text(df)
+
+    # Get X_train, y_train, X_test, y_test
+    test_set = df_expand[df_expand["split_id"] == split_id]
+    train_set = df_expand[df_expand["split_id"] != split_id]
+    assert len(df_expand) != 0
+    assert len(test_set) + len(train_set) == len(df_expand)
+    # Clean Train + Test X
+    train_reset = train_set.reset_index(drop=True)
+    test_reset = test_set.reset_index(drop=True)
+    # y
+    y_train = train_reset[f"impact_score_{impact_type}"]
+    y_test = test_reset[f"impact_score_{impact_type}"]
+    # ================> Fit + extract info from model
     model.fit(train_reset, y_train, shuffle=hypothesis_shuffle, perm_dir=perm_dir)
 
     pred_df = model.predict_all(test_reset)
 
-    # ── Coefficients ──────────────────────────────────────────────────────────
+    # Coefficients
     coef_df = model.get_coef_df()
     coef_df["split_id"] = split_id  # tag with fold so rows stay traceable
 
-    # ── Permutation IDs ───────────────────────────────────────────────────────
+    # Permutation IDs
     perm_id_df = pd.DataFrame(
         {f"perm_id_split_{split_id}": model.perm_ids},
         index=list(range(len(model.perm_ids))),
     )
 
-    # ── Predictions ───────────────────────────────────────────────────────────
+    # Predictions
     if num_layers == 1:
         output_df = pd.DataFrame(
             {
