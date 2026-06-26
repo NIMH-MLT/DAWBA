@@ -370,3 +370,22 @@ OUTCOMES_EXPAND = [
     "I2",
     "I3",
 ]
+
+
+def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
+    """
+    Helper returning path to train df given model configuration
+    """
+    if agg_type in ["avg", "max", "block"]:
+        intermediate_dir = "w_probs"
+    elif agg_type in ["binary", "proba-limited"]:
+        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
+    else:
+        raise ValueError(f"Unreccognized agg type: {agg_type}")
+    return (
+        df_dir
+        / intermediate_dir
+        / llama_model
+        / desc_seg_type
+        / f"{impact_type}.parquet"
+    )
