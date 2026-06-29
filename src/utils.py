@@ -1,3 +1,61 @@
+# utils.py
+
+import pandas as pd
+
+
+def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
+    """
+    Helper returning path to train df given model configuration
+    """
+    if agg_type in ["avg", "max", "block"]:
+        intermediate_dir = "w_probs"
+    elif agg_type in ["binary", "proba-limited"]:
+        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
+    else:
+        raise ValueError(f"Unreccognized agg type: {agg_type}")
+    return (
+        df_dir
+        / intermediate_dir
+        / llama_model
+        / desc_seg_type
+        / f"{impact_type}.parquet"
+    )
+
+
+def get_prob_col_outcomes(agg_type, desc_seg_type):
+    if agg_type in ["avg", "max", "block"]:
+        return f"prob_vector_{agg_type}", IMPACTME_OUTCOMES_LR
+    elif agg_type in ["proba-limited", "binary"]:
+        prob_col = "open_text_block_0_shot"
+        if desc_seg_type == "new":
+            prob_outcomes = IMPACTME_OUTCOMES_FULL
+        elif desc_seg_type == "expanded":
+            prob_outcomes = OUTCOMES_EXPAND
+        elif desc_seg_type in ["original", "augment_neg", "augment"]:
+            prob_outcomes = IMPACTME_OUTCOMES_SHOT
+        elif desc_seg_type == "combined":  # combines expanded + original
+            prob_outcomes = [f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT] + [
+                f"{col}_expand" for col in OUTCOMES_EXPAND
+            ]
+        else:
+            raise ValueError(f"Unrecognized desc_seg_type: {desc_seg_type}")
+    else:
+        raise ValueError(f"Unrecognized agg_type: {agg_type}")
+    return prob_col, prob_outcomes
+
+
+def expand_text(df, agg_type, desc_seg_type):
+    prob_col, prob_outcomes = get_prob_col_outcomes(
+        agg_type=agg_type, desc_seg_type=desc_seg_type
+    )
+    new_cols = pd.DataFrame(
+        df[prob_col].tolist(), columns=prob_outcomes, index=df.index
+    )
+    df = df.join(new_cols)
+    df = df.drop(columns=prob_col)
+    return df
+
+
 ## Column tyoes
 col_config_og = {
     "self_impact": [
@@ -370,22 +428,3 @@ OUTCOMES_EXPAND = [
     "I2",
     "I3",
 ]
-
-
-def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
-    """
-    Helper returning path to train df given model configuration
-    """
-    if agg_type in ["avg", "max", "block"]:
-        intermediate_dir = "w_probs"
-    elif agg_type in ["binary", "proba-limited"]:
-        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
-    else:
-        raise ValueError(f"Unreccognized agg type: {agg_type}")
-    return (
-        df_dir
-        / intermediate_dir
-        / llama_model
-        / desc_seg_type
-        / f"{impact_type}.parquet"
-    )

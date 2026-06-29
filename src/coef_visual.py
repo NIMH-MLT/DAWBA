@@ -28,7 +28,7 @@ def get_pivot(
 
 
 def plot_heatmap(
-    pivot, title="avg_val by Repeat and Feature", vmin=-3, vmax=3, xlabel="Repeat"
+    pivot, title="avg_val by Repeat and Feature", vmin=-3, vmax=3, xlabel="Repeat", fmt='.2f'
 ):
     ## PLOT
     cmap = LinearSegmentedColormap.from_list(
@@ -43,7 +43,7 @@ def plot_heatmap(
     sns.heatmap(
         pivot,
         annot=True,  # show values in cells
-        fmt=".2f",  # format to 2 decimal places
+        fmt=fmt,  # format to 2 decimal places
         cmap=cmap,
         center=0,
         # vmin=-abs_max,

@@ -43,6 +43,11 @@ def run_perm_r2_swarm(impact_list, log_dir, cmd_dir, swarm_time, n_batch, partit
         subprocess.run(swarm_cmd, shell=True)
 
 
+def run_lmg_swarm(cmd_path, swarm_time, gb, num_threads, log_dir, partition, n_batch):
+    swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={log_dir}  --job-name=lmg_imp --partition={partition} -b {n_batch} {cmd_path}"
+    subprocess.run(swarm_cmd, shell=True)
+
+
 ####################################################
 ################# MAKE CMD STRINGS #################
 ####################################################
@@ -70,5 +75,43 @@ def make_perm_level(
         str(perm_dir),
         "--impact_type",
         impact_type,
+    ]
+    return " ".join(cmd_str_list)
+
+
+def create_lmg_cmd(
+    config_dict,
+    n_cv_repeats,
+    n_cv_splits,
+    seed,
+    n_lmg_samples,
+    df_path,
+    n_jobs,
+    export_path,
+):
+    import shlex
+    import json
+
+    cmd_str_list = [
+        f"export PYTHONPATH={BASE_PATH};",
+        f"export OMP_NUM_THREADS={n_jobs + 4};",
+        "uv run",
+        "python -m src.lmg_imp",
+        "--config_dict",
+        shlex.quote(json.dumps(config_dict)),
+        "--n_cv_repeats",
+        str(n_cv_repeats),
+        "--n_cv_splits",
+        str(n_cv_splits),
+        "--seed",
+        str(seed),
+        "--n_lmg_samples",
+        str(n_lmg_samples),
+        "--df_path",
+        str(df_path),
+        "--n_jobs",
+        str(n_jobs),
+        "--export_path",
+        str(export_path),
     ]
     return " ".join(cmd_str_list)

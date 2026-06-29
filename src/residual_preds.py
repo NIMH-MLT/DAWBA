@@ -10,10 +10,10 @@ import numpy as np
 from itertools import product
 
 
-def add_split_col(df, pred_type, n_splits, tol=0.1, random_state=SEED, verbose=0):
+def add_split_col(df, impact_type, n_splits, tol=0.1, random_state=SEED, verbose=0):
     df = df.copy()
     if verbose != 0:
-        print(f"Pred type: {pred_type}")
+        print(f"Pred type: {impact_type}")
     y = df["eligible_group"]
     skf = StratifiedKFold(n_splits=n_splits, random_state=random_state, shuffle=True)
     folds_positional = [tst for trn, tst in skf.split(np.zeros(len(y)), y)]
@@ -25,19 +25,23 @@ def add_split_col(df, pred_type, n_splits, tol=0.1, random_state=SEED, verbose=0
         df.iloc[split_indices, df.columns.get_loc(split_col_name)] = split_id
     ## Ensure splits look good + explore outcome var
     check_ratios(
-        df_w_splits=df, pred_type=pred_type, tol=tol, verbose=verbose, n_splits=n_splits
+        df_w_splits=df,
+        impact_type=impact_type,
+        tol=tol,
+        verbose=verbose,
+        n_splits=n_splits,
     )
     return df
 
 
-def check_ratios(df_w_splits, pred_type, n_splits, tol=0.1, verbose=0):
+def check_ratios(df_w_splits, impact_type, n_splits, tol=0.1, verbose=0):
     ratio_list_dict = {k: [] for k in df_w_splits["eligible_group"].unique()}
     ## Populate dict of lists w/ normalized ratio of eligible group
     for split in range(n_splits):
         sub_df = df_w_splits[df_w_splits["split_id"] == split]
         if verbose != 0:
             print(
-                f"\tSplit {split+1} avg score: {np.mean(sub_df[f'impact_score_{pred_type}'])}"
+                f"\tSplit {split+1} avg score: {np.mean(sub_df[f'impact_score_{impact_type}'])}"
             )
         val_counts = sub_df["eligible_group"].value_counts(normalize=True)
         for group in ratio_list_dict.keys():
@@ -141,7 +145,7 @@ def loop_through_resid_params(
         random_state_for_split = seed + repeat
         df_w_splits = add_split_col(
             df=df,
-            pred_type=impact_type,
+            impact_type=impact_type,
             tol=split_tol,
             random_state=random_state_for_split,
             n_splits=n_splits,
