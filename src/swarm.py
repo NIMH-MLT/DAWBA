@@ -23,12 +23,13 @@ def run_perm_swarm(
     num_cpu=8,
     partition="quick",
     swarm_time="1:00:00",
+    job_name="preds_perm",
 ):
     for impact_swarm_path in cmd_dir.iterdir():
         impact_name = impact_swarm_path.stem
         log_dir = swarm_log_dir / impact_name
         log_dir.mkdir(parents=True, exist_ok=True)
-        swarm_cmd = f"swarm --time={swarm_time} --gres=lscratch:{scratch_gb} -g {process_gb} -t {num_cpu} --logdir={log_dir}  --job-name={impact_name}_preds_perm --partition={partition} -b {n_batch} {impact_swarm_path}"
+        swarm_cmd = f"swarm --time={swarm_time} --gres=lscratch:{scratch_gb} -g {process_gb} -t {num_cpu} --logdir={log_dir}  --job-name={impact_name}_{job_name} --partition={partition} -b {n_batch} {impact_swarm_path}"
         print(swarm_cmd)
         subprocess.run(swarm_cmd, shell=True)
 
@@ -44,6 +45,7 @@ def run_perm_r2_swarm(impact_list, log_dir, cmd_dir, swarm_time, n_batch, partit
 
 
 def run_lmg_swarm(cmd_path, swarm_time, gb, num_threads, log_dir, partition, n_batch):
+
     swarm_cmd = f"swarm --time={swarm_time} -g {gb} -t {num_threads} --logdir={log_dir}  --job-name=lmg_imp --partition={partition} -b {n_batch} {cmd_path}"
     subprocess.run(swarm_cmd, shell=True)
 
@@ -87,6 +89,7 @@ def create_lmg_cmd(
     n_lmg_samples,
     df_path,
     n_jobs,
+    perm_dir,
     export_path,
 ):
     import shlex
@@ -111,6 +114,8 @@ def create_lmg_cmd(
         str(df_path),
         "--n_jobs",
         str(n_jobs),
+        "--perm_dir",
+        str(perm_dir),
         "--export_path",
         str(export_path),
     ]

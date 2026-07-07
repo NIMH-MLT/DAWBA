@@ -45,7 +45,12 @@ def prep_train_test(base_df, split_id, impact_type, agg_type, desc_seg_type):
     and extracts X and y for each
     """
     # Expand text prob vectors to make probs granular cols
-    df_expand = expand_text(df=base_df, agg_type=agg_type, desc_seg_type=desc_seg_type)
+    df_expand, prob_cols = expand_text(
+        df=base_df,
+        agg_type=agg_type,
+        desc_seg_type=desc_seg_type,
+        impact_type=impact_type,
+    )
 
     # Get X_train, y_train, X_test, y_test
     test_set = df_expand[df_expand["split_id"] == split_id].reset_index(drop=True)
@@ -78,6 +83,7 @@ def get_lr_output(
     two_layer_base,  # first estimator type for 2 layer iteration; one of 'Q', 'T'
     linear_type="ridge",
     hypothesis_shuffle=None,  # None, 'text'
+    scale=False,
 ):
     """
     - For a given split during CV, subset into train/test sets
@@ -91,6 +97,35 @@ def get_lr_output(
     - Get predictions on test set from each layer of Regressor
         - Written to memory as pred_df.parquet
     """
+    # ================> Set up data
+    X_train, X_test, y_train, y_test = prep_train_test(
+        base_df=df,
+        split_id=split_id,
+        impact_type=impact_type,
+        agg_type=agg_type,
+        desc_seg_type=desc_seg_type,
+    )
+    prob_col, prob_outcomes = get_prob_col_outcomes(
+        agg_type=agg_type, desc_seg_type=desc_seg_type, impact_type=impact_type
+    )
+    if scale:
+        from sklearn.preprocessing import MinMaxScaler
+
+        scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
+        X_train[prob_outcomes] = scaler.fit_transform(X_train[prob_outcomes])
+        X_test[prob_outcomes] = scaler.transform(X_test[prob_outcomes])
+    # parent
+    if impact_type == "parent":
+        outcome_sub_list = [
+            outcome for outcome in prob_outcomes if outcome not in ["f1"]
+        ]
+    elif impact_type == "self":
+        outcome_sub_list = [
+            outcome for outcome in prob_outcomes if outcome not in ["d2", "e1"]
+        ]
+    # self
+    else:
+        raise ValueError(f"Unrecognized impact: {impact_type}")
     # ================> Set up model
     model_args = dict(
         num_layers=num_layers,
@@ -103,21 +138,16 @@ def get_lr_output(
         seed=seed,
         linear_type=linear_type,
         desc_seg_type=desc_seg_type,
-        outcome_sub_list=None,  # dont subset outcomes for full run
+        outcome_sub_list=outcome_sub_list,  # dont subset outcomes for full run
     )
     if num_layers == 1:
         model = IndependentRegressor(**model_args)
     else:
-        model = ResidualRegressor(**model_args, two_layer_base=two_layer_base)
+        model = ResidualRegressor(
+            **model_args,
+            two_layer_base=two_layer_base,
+        )
 
-    # ================> Set up data
-    X_train, X_test, y_train, y_test = prep_train_test(
-        base_df=df,
-        split_id=split_id,
-        impact_type=impact_type,
-        agg_type=agg_type,
-        desc_seg_type=desc_seg_type,
-    )
     # ================> Fit + extract info from model
     model.fit(X_train, y_train, shuffle=hypothesis_shuffle, perm_dir=perm_dir)
     pred_df = model.predict_all(X_test)
@@ -142,7 +172,7 @@ def get_lr_output(
 ############################################################
 
 
-def build_model(config_dict, llama_model, data_dir):
+def build_model(config_dict, llama_model, data_dir, scale=False):
     """
     - Fit a ResidualRegressor given some model configuration
     - Returns trained model, learned feature coefs, and loaded train DF
@@ -156,14 +186,20 @@ def build_model(config_dict, llama_model, data_dir):
         impact_type=config_dict["impact_type"],
     )
     train_df = pd.read_parquet(data_path)
-    df_expand = expand_text(
+    df_expand, prob_cols = expand_text(
         df=train_df,
         agg_type=config_dict["agg_type"],
         desc_seg_type=config_dict["desc_seg_type"],
+        impact_type=config_dict["impact_type"],
     )
     target_col = f"impact_score_{config_dict['impact_type']}"
     X_train = df_expand.drop(target_col, axis=1)
     y_train = df_expand[target_col]
+    if scale:
+        from sklearn.preprocessing import MinMaxScaler
+
+        scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
+        X_train[prob_cols] = scaler.fit_transform(X_train[prob_cols])
 
     # Build + fit model
     model = ResidualRegressor(**config_dict, two_layer_base=None)
@@ -201,10 +237,11 @@ def get_saliency_map(config_dict, model, df, coef_df):
     impact_type = config_dict["impact_type"]
     quest_pref = "p_dep" if impact_type == "parent" else "s_dep"
     # Expand text prob vector into cols
-    df_sub = expand_text(
+    df_sub, prob_cols = expand_text(
         df=df,
         agg_type=config_dict["agg_type"],
         desc_seg_type=config_dict["desc_seg_type"],
+        impact_type=impact_type,
     )
     # Add sum score col
     quest_cols = model.quest_cols

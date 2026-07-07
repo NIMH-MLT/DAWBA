@@ -1,5 +1,5 @@
 import pandas as pd
-from src.utils import col_config_sensitivity, get_prob_col_outcomes
+from src.utils import col_config_sensitivity, get_prob_col_outcomes, get_perm_seed
 from src.residual_preds import add_split_col
 from src.residual_func import prep_train_test
 from src.Regressor import ResidualRegressor
@@ -31,11 +31,22 @@ def get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test):
 
 
 def lmg_imp_wrapper(
-    config_dict, n_cv_repeats, n_cv_splits, seed, n_lmg_samples, df_path, n_jobs
+    config_dict,
+    n_cv_repeats,
+    n_cv_splits,
+    seed,
+    df_path,
+    n_jobs,
+    perm_dir,
 ):
+    """
+    For a given permutation iteration, loop through repeats/splits and get avg/stdev
+    added % variance explained (r^2; coefficient of determination) of each outcome
+    """
+    perm_seed = get_perm_seed(perm_dir=perm_dir)
     impact_type = config_dict["impact_type"]
     df = pd.read_parquet(df_path)
-    all_perm_imps = []
+
     jobs = []
     for repeat in range(n_cv_repeats):
         rand_state_for_split = seed + repeat
@@ -54,32 +65,32 @@ def lmg_imp_wrapper(
                 desc_seg_type=config_dict["desc_seg_type"],
             )
             jobs.append((X_train, X_test, y_train, y_test, repeat, split_id))
-    all_perm_imps = Parallel(n_jobs=n_jobs, verbose=10)(
+    lmg_dfs = Parallel(n_jobs=n_jobs, verbose=10)(
         delayed(get_perm_feat_imp)(
             X_train=X_train,
             y_train=y_train,
             X_test=X_test,
             y_test=y_test,
             model_config_dict=config_dict,
-            n_samples=n_lmg_samples,
-            random_state=seed,
+            random_state=perm_seed,
             repeat=repeat,
             split_id=split_id,
+            impact_type=impact_type,
         )
         for X_train, X_test, y_train, y_test, repeat, split_id in jobs
     )
-    # merge dfs
-    all_perm_imp_df = reduce(
-        lambda left, right: pd.merge(left, right, on="outcome"), all_perm_imps
-    )
-    all_perm_imp_df = all_perm_imp_df.set_index("outcome")
+    # # merge dfs across splits/repeats
+    all_perm_imp_df = reduce(lambda left, right: left.join(right, how="outer"), lmg_dfs)
+    # get original/reversed cols
+    og_cols = [c for c in all_perm_imp_df.columns if c.startswith("original")]
+    rev_cols = [c for c in all_perm_imp_df.columns if c.startswith("reversed")]
+    # get mean/stdev across splits/repeats separately
     all_perm_imp_df = all_perm_imp_df.copy().assign(
-        mean=lambda df: df.mean(axis=1).round(4),
-        std=lambda df: df.std(axis=1).round(4),
+        original_mean=lambda df: df[og_cols].mean(axis=1).round(4),
+        original_std=lambda df: df[og_cols].std(axis=1).round(4),
+        reversed_mean=lambda df: df[rev_cols].mean(axis=1).round(4),
+        reversed_std=lambda df: df[rev_cols].std(axis=1).round(4),
     )
-    # all_perm_imp_df['mean'] = all_perm_imp_df.mean(axis=1).round(4)
-    # all_perm_imp_df['std'] = all_perm_imp_df.std(axis=1).round(4)
-
     return all_perm_imp_df
 
 
@@ -89,8 +100,8 @@ def get_perm_feat_imp(
     X_test,
     y_test,
     model_config_dict,
-    n_samples,
     random_state,
+    impact_type,
     repeat=None,
     split_id=None,
 ):
@@ -103,11 +114,22 @@ def get_perm_feat_imp(
     _, outcome_list = get_prob_col_outcomes(
         agg_type=model_config_dict["agg_type"],
         desc_seg_type=model_config_dict["desc_seg_type"],
+        impact_type=impact_type,
     )
 
     rng = np.random.default_rng(random_state)
+    og_perm = tuple(rng.permutation(outcome_list))
 
-    perm_list = [tuple(rng.permutation(outcome_list)) for _ in range(n_samples)]
+    og_col_name = "original"
+    reversed_col_name = "reversed"
+    if repeat is not None and split_id is not None:
+        og_col_name += f"_{repeat}_{split_id}"
+        reversed_col_name += f"_{repeat}_{split_id}"
+    perm_dict = {
+        og_col_name: og_perm,
+        # add reverse order for full coverage
+        reversed_col_name: tuple(reversed(og_perm)),
+    }
 
     def run_perm(perm):
         contributions = {outcome: 0.0 for outcome in outcome_list}
@@ -136,25 +158,9 @@ def get_perm_feat_imp(
         assert tot_r2 == r2_new, f"TOT: {tot_r2}; NEW: {r2_new}"
         return contributions
 
-    ## Aggregate across outcome perms
-    all_conts = [run_perm(perm) for perm in perm_list]
-    lmg = {
-        outcome: np.round(np.mean([r[outcome] for r in all_conts]), 4)
-        for outcome in outcome_list
-    }
-    # Make pandas df
-    lmg_col = "lmg"
-    if repeat is not None and split_id is not None:
-        lmg_col += f"_{repeat}_{split_id}"
-    res_dict = {
-        "outcome": list(lmg.keys()),
-        lmg_col: list(lmg.values()),
-    }
-    res_df = (
-        pd.DataFrame(res_dict)
-        .sort_values(lmg_col, ascending=False)
-        .reset_index(drop=True)
-    )
+    ## Aggregate across og/reverse perms
+    lmg_dict = {list_type: run_perm(perm) for list_type, perm in perm_dict.items()}
+    res_df = pd.DataFrame(lmg_dict).rename_axis("outcome").sort_values("outcome")
     return res_df
 
 
@@ -167,9 +173,9 @@ def build_parser():
     parser.add_argument("--n_cv_repeats", type=int)
     parser.add_argument("--n_cv_splits", type=int)
     parser.add_argument("--seed", type=int)
-    parser.add_argument("--n_lmg_samples", type=int)
     parser.add_argument("--df_path", type=Path)
     parser.add_argument("--n_jobs", type=int)
+    parser.add_argument("--perm_dir", type=Path)
     parser.add_argument("--export_path", type=Path)
     return parser
 
@@ -182,10 +188,11 @@ def main(argv=None):
         n_cv_repeats=args.n_cv_repeats,
         n_cv_splits=args.n_cv_repeats,
         seed=args.seed,
-        n_lmg_samples=args.n_lmg_samples,
         df_path=args.df_path,
         n_jobs=args.n_jobs,
+        perm_dir=args.perm_dir,
     )
+
     export_path = args.export_path
     if export_path.exists():
         print(f"OVER-WRITING result at path: {export_path}")

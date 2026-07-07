@@ -1,6 +1,6 @@
 # Regressor.py
 from src.perm import create_perms
-from src.utils import get_prob_col_outcomes
+from src.utils import get_prob_col_outcomes, get_perm_seed
 
 
 import numpy as np
@@ -48,41 +48,30 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         quest_sum = quest_np.sum(axis=1, keepdims=True)
         # Text
         prob_col, prob_outcomes = get_prob_col_outcomes(
-            agg_type=self.agg_type, desc_seg_type=self.desc_seg_type
+            agg_type=self.agg_type,
+            desc_seg_type=self.desc_seg_type,
+            impact_type=self.impact_type,
         )
         # Subset psychological text feats if prompted
         if self.outcome_sub_list is not None:
-            assert set(self.outcome_sub_list).issubset(
-                prob_outcomes
-            )  # ensure passed outcomes are part of whole outcome list
+            # ensure passed outcomes are part of whole outcome list
+            # print(prob_outcomes)
+            if not set(self.outcome_sub_list).issubset(prob_outcomes):
+                print(set(self.outcome_sub_list) - set(prob_outcomes))
+                print(prob_col)
+                print(self.desc_seg_type)
+                print(
+                    [col for col in self.outcome_sub_list if col not in prob_outcomes]
+                )
+                print(prob_outcomes)
             prob_outcomes = self.outcome_sub_list
         prob_vals = X[prob_outcomes].values
         prob_vec = np.vstack(prob_vals).astype(float)
         # Return all
         return quest_sum, quest_np, prob_vec
 
-    # def _get_prob_col_outcomes(self):
-    #     if self.agg_type in ["avg", "max", "block"]:
-    #         return f"prob_vector_{self.agg_type}", IMPACTME_OUTCOMES_LR
-    #     elif self.agg_type in ["proba-limited", "binary"]:
-    #         prob_col = "open_text_block_0_shot"
-    #         if self.desc_seg_type == "new":
-    #             prob_outcomes = IMPACTME_OUTCOMES_FULL
-    #         elif self.desc_seg_type == "expanded":
-    #             prob_outcomes = OUTCOMES_EXPAND
-    #         elif self.desc_seg_type in ["original", "augment_neg", "augment"]:
-    #             prob_outcomes = IMPACTME_OUTCOMES_SHOT
-    #         elif self.desc_seg_type == "combined":  # combines expanded + original
-    #             prob_outcomes = [
-    #                 f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT
-    #             ] + [f"{col}_expand" for col in OUTCOMES_EXPAND]
-    #         else:
-    #             raise ValueError(f"Unrecognized desc_seg_type: {self.desc_seg_type}")
-    #     else:
-    #         raise ValueError(f"Unrecognized agg_type: {self.agg_type}")
-    #     return prob_col, prob_outcomes
-
     def get_coef_df(self):
+        # TODO: consider cases of 1-layer w/ Q or T; cases of 2-layer w/ Q base (QT instead of ST)
         parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
         if self.num_layers == 1:
             return pd.concat(parts, ignore_index=True)
@@ -132,13 +121,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
 
     def shuffle_vals(self, X, col_to_shuffle_np, perm_dir):
         ## Get permutation seed
-        perm_seed_path = perm_dir / f"seed.txt"
-        if not perm_seed_path.exists():
-            raise ValueError(
-                f"No seed file exists at path {perm_seed_path}, but prompted to permute. Aborting..."
-            )
-        with open(perm_seed_path, "r") as f:
-            perm_seed = int(f.read().strip())
+        perm_seed = get_perm_seed(perm_dir=perm_dir)
         # Sort by DAWBA_ID to ensure canonical order regardless of input row order
         sort_idx = np.argsort(X["DAWBA_ID"].values)
         X_sorted = X.iloc[sort_idx].reset_index(drop=True)
@@ -187,7 +170,9 @@ class IndependentRegressor(BaseRegressor):
         self._feat1 = ["sum_score"]
         self._feat2 = list(self.quest_cols)
         _, self._feat3 = get_prob_col_outcomes(
-            agg_type=self.agg_type, desc_seg_type=self.desc_seg_type
+            agg_type=self.agg_type,
+            desc_seg_type=self.desc_seg_type,
+            impact_type=self.impact_type,
         )
 
         ## Layer 1 — Sum scores
@@ -268,7 +253,9 @@ class ResidualRegressor(BaseRegressor):
         self._feat1 = ["sum_score"]
         self._feat2 = list(self.quest_cols)
         _, self._feat3 = get_prob_col_outcomes(
-            agg_type=self.agg_type, desc_seg_type=self.desc_seg_type
+            agg_type=self.agg_type,
+            desc_seg_type=self.desc_seg_type,
+            impact_type=self.impact_type,
         )
 
         ## Layer 1 — Sum scores

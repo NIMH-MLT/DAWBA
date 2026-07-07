@@ -22,7 +22,7 @@ def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
     )
 
 
-def get_prob_col_outcomes(agg_type, desc_seg_type):
+def get_prob_col_outcomes(agg_type, desc_seg_type, impact_type):
     if agg_type in ["avg", "max", "block"]:
         return f"prob_vector_{agg_type}", IMPACTME_OUTCOMES_LR
     elif agg_type in ["proba-limited", "binary"]:
@@ -44,16 +44,17 @@ def get_prob_col_outcomes(agg_type, desc_seg_type):
     return prob_col, prob_outcomes
 
 
-def expand_text(df, agg_type, desc_seg_type):
+def expand_text(df, agg_type, desc_seg_type, impact_type):
     prob_col, prob_outcomes = get_prob_col_outcomes(
-        agg_type=agg_type, desc_seg_type=desc_seg_type
+        agg_type=agg_type, desc_seg_type=desc_seg_type, impact_type=impact_type
     )
     new_cols = pd.DataFrame(
         df[prob_col].tolist(), columns=prob_outcomes, index=df.index
     )
     df = df.join(new_cols)
     df = df.drop(columns=prob_col)
-    return df
+
+    return df, prob_outcomes
 
 
 ## Column tyoes
@@ -428,3 +429,12 @@ OUTCOMES_EXPAND = [
     "I2",
     "I3",
 ]
+
+
+def get_perm_seed(perm_dir):
+    perm_seed_path = perm_dir / f"seed.txt"
+    if not perm_seed_path.exists():
+        raise ValueError(f"No seed file exists at path {perm_seed_path}. Aborting...")
+    with open(perm_seed_path, "r") as f:
+        perm_seed = int(f.read().strip())
+    return perm_seed
