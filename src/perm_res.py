@@ -181,7 +181,7 @@ def get_collapsed_null(
 def collapse_hypothesis(df1, df2, col1, col2, keep_cols):
     common_cols = [
         "agg_type",
-        "llama_model",
+        "llm_model",
         "desc_seg",
         "alpha",
     ]
@@ -263,7 +263,7 @@ def get_avg_r2(df):
     params = [
         "num_layers",
         "agg_type",
-        "llama_model",
+        "llm_model",
         "desc_seg",
         "alpha",
         "two_layer_base",
@@ -296,7 +296,7 @@ def ensure_consistent(id_df, num_layers, num_repeats=10, num_splits=3):
             for _, group in repeat_df.groupby(
                 [
                     "agg_type",
-                    "llama_model",
+                    "llm_model",
                     "desc_seg",
                     "alpha",
                     "two_layer_base",

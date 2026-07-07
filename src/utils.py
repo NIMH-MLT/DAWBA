@@ -3,27 +3,35 @@
 import pandas as pd
 
 
-def get_df_path(df_dir, llama_model, agg_type, desc_seg_type, impact_type):
+def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type):
     """
     Helper returning path to train df given model configuration
     """
-    if agg_type in ["avg", "max", "block"]:
+    if desc_seg_type in ["zero_shot", "few_shot"]:
+        llm_model_clean = "qwen" if llm_model == "Qwen" else "llama"
+        return (
+            df_dir
+            / "new_model_shot/cleaned"
+            / llm_model_clean
+            / desc_seg_type
+            / agg_type
+            / f"{impact_type}.parquet"
+        )
+    elif agg_type in ["avg", "max", "block"]:
         intermediate_dir = "w_probs"
     elif agg_type in ["binary", "proba-limited"]:
         intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
     else:
         raise ValueError(f"Unreccognized agg type: {agg_type}")
     return (
-        df_dir
-        / intermediate_dir
-        / llama_model
-        / desc_seg_type
-        / f"{impact_type}.parquet"
+        df_dir / intermediate_dir / llm_model / desc_seg_type / f"{impact_type}.parquet"
     )
 
 
 def get_prob_col_outcomes(agg_type, desc_seg_type, impact_type):
-    if agg_type in ["avg", "max", "block"]:
+    if desc_seg_type in ["zero_shot", "few_shot"]:
+        return "", ADVANCED_EXTRACTION_OUTCOMES
+    elif agg_type in ["avg", "max", "block"]:
         return f"prob_vector_{agg_type}", IMPACTME_OUTCOMES_LR
     elif agg_type in ["proba-limited", "binary"]:
         prob_col = "open_text_block_0_shot"
@@ -40,7 +48,9 @@ def get_prob_col_outcomes(agg_type, desc_seg_type, impact_type):
         else:
             raise ValueError(f"Unrecognized desc_seg_type: {desc_seg_type}")
     else:
-        raise ValueError(f"Unrecognized agg_type: {agg_type}")
+        raise ValueError(
+            f"Unrecognized agg_type: {agg_type}--- DESC SEG: {desc_seg_type}"
+        )
     return prob_col, prob_outcomes
 
 
@@ -55,6 +65,15 @@ def expand_text(df, agg_type, desc_seg_type, impact_type):
     df = df.drop(columns=prob_col)
 
     return df, prob_outcomes
+
+
+def get_perm_seed(perm_dir):
+    perm_seed_path = perm_dir / f"seed.txt"
+    if not perm_seed_path.exists():
+        raise ValueError(f"No seed file exists at path {perm_seed_path}. Aborting...")
+    with open(perm_seed_path, "r") as f:
+        perm_seed = int(f.read().strip())
+    return perm_seed
 
 
 ## Column tyoes
@@ -290,16 +309,6 @@ ALPHA_LIST = [
 #     50.0,
 # ]
 
-L1_LIST = [
-    0.05,
-    0.1,
-    0.25,
-    0.5,
-    0.75,
-    0.9,
-    0.99,
-]
-
 IMPACTME_OUTCOMES_FULL = [
     "a1",
     "a2",
@@ -431,10 +440,85 @@ OUTCOMES_EXPAND = [
 ]
 
 
-def get_perm_seed(perm_dir):
-    perm_seed_path = perm_dir / f"seed.txt"
-    if not perm_seed_path.exists():
-        raise ValueError(f"No seed file exists at path {perm_seed_path}. Aborting...")
-    with open(perm_seed_path, "r") as f:
-        perm_seed = int(f.read().strip())
-    return perm_seed
+ADVANCED_EXTRACTION_OUTCOMES = [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19",
+    "S20",
+    "S21",
+    "S22",
+    "S23",
+    "S24",
+    "S25",
+    "S26",
+    "S27",
+    "S28",
+    "S29",
+    "S30",
+    "S31",
+    "S32",
+    "S33",
+    "S34",
+    "S35",
+    "S36",
+    "S37",
+    "S38",
+    "S39",
+    "S40",
+    "S41",
+    "S42",
+    "S43",
+    "S44",
+    "S45",
+    "S46",
+    "S47",
+    "S48",
+    "S49",
+    "S50",
+    "S51",
+    "S52",
+    "S53",
+    "S54",
+    "S55",
+    "S56",
+    "S57",
+    "S58",
+    "S59",
+    "S60",
+    "S61",
+    "S62",
+    "S63",
+    "S64",
+    "S65",
+    "S66",
+    "S67",
+    "S68",
+    "S69",
+    "S70",
+    "S71",
+    "S72",
+    "S73",
+    "S74",
+    "S75",
+    "S76",
+    "S77",
+    "S78",
+    "S79",
+    "S80",
+]

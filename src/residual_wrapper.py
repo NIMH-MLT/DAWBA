@@ -8,12 +8,22 @@ from joblib import Parallel, delayed
 from src.utils import get_df_path
 
 
+def is_good_config(desc_seg, model_name, prob_agg):
+    if desc_seg in ["zero_shot", "few_shot"]:
+        if prob_agg not in ["binary", "scale"]:
+            return False
+    # Qwen model & scale agg must use ^ desc_seg
+    elif model_name == "Qwen" or prob_agg == "scale":
+        return False
+    return True
+
+
 def _run_one_config(
     num_layers,
     agg_type,
-    llama_model,
+    llm_model,
     desc_seg,
-    param_dict,
+    alpha_list,
     df_dir,
     scratch_dir,
     perm_dir,
@@ -22,7 +32,7 @@ def _run_one_config(
 ):
     df_path = get_df_path(
         df_dir=df_dir,
-        llama_model=llama_model,
+        llm_model=llm_model,
         agg_type=agg_type,
         desc_seg_type=desc_seg,
         impact_type=impact_type,
@@ -34,7 +44,7 @@ def _run_one_config(
         / "ridge"
         / agg_type
         / impact_type
-        / llama_model
+        / llm_model
         / desc_seg
     )
     loop_through_resid_params(
@@ -48,7 +58,7 @@ def _run_one_config(
         perm_dir=perm_dir,
         linear_type="ridge",
         shuffle=config_dict["shuffle"],
-        alpha_list=param_dict["alpha"],
+        alpha_list=alpha_list,
         max_iter=config_dict["max_iter"],
         seed=config_dict["seed"],
         n_repeats=config_dict["n_repeats"],
@@ -96,8 +106,8 @@ def loop_through_params(
         shuffle
     """
     jobs = []
-    for num_layers, agg_type, llama_model in product(
-        param_dict["layers"], param_dict["agg"], param_dict["llama"]
+    for num_layers, agg_type, llm_model in product(
+        param_dict["layers"], param_dict["agg"], param_dict["model"]
     ):
         desc_seg_list = (
             param_dict["seg"]
@@ -105,21 +115,22 @@ def loop_through_params(
             else param_dict["desc"]
         )
         for desc_seg in desc_seg_list:
-            jobs.append((num_layers, agg_type, llama_model, desc_seg))
+            if is_good_config(desc_seg, llm_model, agg_type):
+                jobs.append((num_layers, agg_type, llm_model, desc_seg))
     Parallel(n_jobs=len(jobs), verbose=10)(
         delayed(_run_one_config)(
-            num_layers,
-            agg_type,
-            llama_model,
-            desc_seg,
-            param_dict,
-            df_dir,
-            scratch_dir,
-            perm_dir,
-            config_dict,
-            impact_type,
+            num_layers=num_layers,
+            agg_type=agg_type,
+            llm_model=llm_model,
+            desc_seg=desc_seg,
+            alpha_list=param_dict["alpha"],
+            df_dir=df_dir,
+            scratch_dir=scratch_dir,
+            perm_dir=perm_dir,
+            config_dict=config_dict,
+            impact_type=impact_type,
         )
-        for num_layers, agg_type, llama_model, desc_seg in jobs
+        for num_layers, agg_type, llm_model, desc_seg in jobs
     )
 
 
@@ -135,10 +146,10 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
 
     for repeat in range(n_repeats):
         id_check_list = []
-        for num_layers, agg_type, llama_model in product(
+        for num_layers, agg_type, llm_model in product(
             param_dict["layers"],
             param_dict["agg"],
-            param_dict["llama"],
+            param_dict["model"],
         ):
             desc_seg_list = (
                 param_dict["seg"]
@@ -146,7 +157,14 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                 else param_dict["desc"]
             )
             two_layer_base_list = ["S", "Q"] if num_layers == 2 else ["None"]
+
             for desc_seg in desc_seg_list:
+                if not is_good_config(
+                    desc_seg=desc_seg,
+                    model_name=llm_model,
+                    prob_agg=agg_type,
+                ):
+                    continue
                 alpha_list = (
                     param_dict["alpha"]
                     if num_layers in [1, 2]
@@ -163,7 +181,7 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                             / "ridge"
                             / agg_type
                             / impact_type
-                            / llama_model
+                            / llm_model
                             / desc_seg
                             / f"alpha_{alpha}"
                             / f"repeat_{repeat}"
@@ -175,7 +193,7 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                             repeat=repeat,
                             num_layers=num_layers,
                             agg_type=agg_type,
-                            llama_model=llama_model,
+                            llm_model=llm_model,
                             desc_seg=desc_seg,
                             alpha=str(alpha),
                             two_layer_base=two_layer_base,

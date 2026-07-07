@@ -44,13 +44,17 @@ def prep_train_test(base_df, split_id, impact_type, agg_type, desc_seg_type):
     Helper for get_lr_output(); Splits data into train/test based on split_id
     and extracts X and y for each
     """
-    # Expand text prob vectors to make probs granular cols
-    df_expand, prob_cols = expand_text(
-        df=base_df,
-        agg_type=agg_type,
-        desc_seg_type=desc_seg_type,
-        impact_type=impact_type,
-    )
+    if desc_seg_type in ["zero_shot", "few_shot"]:
+        df_expand = base_df
+        _, prob_cols = get_prob_col_outcomes(agg_type, desc_seg_type, impact_type)
+    else:
+        # Expand text prob vectors to make probs granular cols
+        df_expand, prob_cols = expand_text(
+            df=base_df,
+            agg_type=agg_type,
+            desc_seg_type=desc_seg_type,
+            impact_type=impact_type,
+        )
 
     # Get X_train, y_train, X_test, y_test
     test_set = df_expand[df_expand["split_id"] == split_id].reset_index(drop=True)
