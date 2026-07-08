@@ -297,7 +297,7 @@ class ResidualRegressor(BaseRegressor):
                 resid2 = resid1
             elif self.two_layer_base == "Q":
                 self.stage2_ = self._make_model(
-                    alpha=self.alpha3,
+                    alpha=self.alpha2,
                     model_type=self.linear_type,
                 )
                 self.stage2_.fit(X2, y)

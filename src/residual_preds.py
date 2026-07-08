@@ -173,29 +173,53 @@ def loop_through_resid_params(
                     combined_coef_df=combined_coef_df,
                     save_dir=export_dir,
                 )
+        # TODO: cleanup logic for 2 layer looping
         elif num_layers == 2:
-            for two_layer_base_val in ["S", "Q"]:
-                for alpha_3 in alpha_list:
-                    selected_alphas = [None, alpha_3]
-                    export_dir = (
-                        base_save_dir
-                        / f"alpha_{alpha_3}"
-                        / f"repeat_{repeat}"
-                        / f"2_layer_base_{two_layer_base_val}"
-                    )
-                    combined_perm_ids, combined_output_df, combined_coef_df = (
-                        loop_through_splits(
-                            selected_alphas=selected_alphas,
-                            df_w_splits=df_w_splits,
-                            two_layer_base_val=two_layer_base_val,
+            for alpha_3 in alpha_list:
+                for two_layer_base_val in ["S", "Q"]:                 
+                    if two_layer_base_val == 'Q':
+                        for alpha_2 in alpha_list:
+                            selected_alphas = [alpha_2, alpha_3]    
+                            export_dir = (
+                                base_save_dir
+                                / f"alpha_{alpha_2}_{alpha_3}"
+                                / f"repeat_{repeat}"
+                                / f"2_layer_base_Q"
+                            )
+                            combined_perm_ids, combined_output_df, combined_coef_df = (
+                                loop_through_splits(
+                                    selected_alphas=selected_alphas,
+                                    df_w_splits=df_w_splits,
+                                    two_layer_base_val="Q",
+                                )
+                            )
+                            export_dfs(
+                                combined_perm_ids=combined_perm_ids,
+                                combined_output_df=combined_output_df,
+                                combined_coef_df=combined_coef_df,
+                                save_dir=export_dir,
+                            )
+                    else:
+                        selected_alphas = [None, alpha_3]
+                        export_dir = (
+                            base_save_dir
+                            / f"alpha_{alpha_3}"
+                            / f"repeat_{repeat}"
+                            / f"2_layer_base_S"
                         )
-                    )
-                    export_dfs(
-                        combined_perm_ids=combined_perm_ids,
-                        combined_output_df=combined_output_df,
-                        combined_coef_df=combined_coef_df,
-                        save_dir=export_dir,
-                    )
+                        combined_perm_ids, combined_output_df, combined_coef_df = (
+                            loop_through_splits(
+                                selected_alphas=selected_alphas,
+                                df_w_splits=df_w_splits,
+                                two_layer_base_val="S",
+                            )
+                        )
+                        export_dfs(
+                            combined_perm_ids=combined_perm_ids,
+                            combined_output_df=combined_output_df,
+                            combined_coef_df=combined_coef_df,
+                            save_dir=export_dir,
+                        )
         else:  # num_layers == 3
             for alpha_2, alpha_3 in product(alpha_list, alpha_list):
                 selected_alphas = [alpha_2, alpha_3]

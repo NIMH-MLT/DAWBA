@@ -13,7 +13,7 @@ def is_good_config(desc_seg, model_name, prob_agg):
         if prob_agg not in ["binary", "scale"]:
             return False
     # Qwen model & scale agg must use ^ desc_seg
-    elif model_name == "Qwen" or prob_agg == "scale":
+    elif model_name == "qwen" or prob_agg == "scale":
         return False
     return True
 
@@ -157,7 +157,6 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                 else param_dict["desc"]
             )
             two_layer_base_list = ["S", "Q"] if num_layers == 2 else ["None"]
-
             for desc_seg in desc_seg_list:
                 if not is_good_config(
                     desc_seg=desc_seg,
@@ -165,16 +164,26 @@ def aggregate_across_params(param_dict, base_import_dir, n_repeats, impact_type)
                     prob_agg=agg_type,
                 ):
                     continue
-                alpha_list = (
-                    param_dict["alpha"]
-                    if num_layers in [1, 2]
-                    else [
-                        f"{a2}_{a3}"
-                        for a2, a3 in product(param_dict["alpha"], param_dict["alpha"])
-                    ]
-                )
-                for alpha in alpha_list:
-                    for two_layer_base in two_layer_base_list:
+                # alpha_list = (
+                #     param_dict["alpha"]
+                #     if num_layers in [1, 2]
+                #     else [
+                #         f"{a2}_{a3}"
+                #         for a2, a3 in product(param_dict["alpha"], param_dict["alpha"])
+                #     ]
+                # )
+                # for alpha in alpha_list:
+                for two_layer_base in two_layer_base_list:
+                    if num_layers == 1 or (num_layers == 2 and two_layer_base == "S"):
+                        alpha_list = param_dict["alpha"]
+                    else:
+                        alpha_list = [
+                            f"{a2}_{a3}"
+                            for a2, a3 in product(
+                                param_dict["alpha"], param_dict["alpha"]
+                            )
+                        ]
+                    for alpha in alpha_list:
                         import_dir = (
                             base_import_dir
                             / f"{num_layers}_layers"

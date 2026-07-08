@@ -292,13 +292,16 @@ ALPHA_LIST = [
     1.0,
     2.5,
     5.0,
-    10.0,
-    20.0,
-    30.0,
-    40.0,
+    15.0,
+    25.0,
     50.0,
     75.0,
     100.0,
+    125.0,
+    150.0,
+    200.0,
+    300.0,
+    500.0
 ]
 # ALPHA_LIST = [
 #     0.1,
@@ -309,6 +312,7 @@ ALPHA_LIST = [
 #     50.0,
 # ]
 
+# all impactme outcomes + 2 new (f4,f5) (used for "new" 0-shot)
 IMPACTME_OUTCOMES_FULL = [
     "a1",
     "a2",
@@ -345,17 +349,17 @@ IMPACTME_OUTCOMES_FULL = [
     "g2",
 ]
 
-
+# all impactme outcomes (used for "original" 0-shot)
 IMPACTME_OUTCOMES_SHOT = [
     outcome for outcome in IMPACTME_OUTCOMES_FULL if outcome not in ["f4", "f5"]
 ]
 
-
+# all impactme outcomes used in og study (used for max, block, avg)
 IMPACTME_OUTCOMES_LR = [
     outcome for outcome in IMPACTME_OUTCOMES_SHOT if outcome not in ["a8", "e3", "e4"]
 ]
 
-
+# new taxonomy of outcomes (used for "expanded" 0-shot)
 OUTCOMES_EXPAND = [
     "A1",
     "A2",
@@ -439,7 +443,7 @@ OUTCOMES_EXPAND = [
     "I3",
 ]
 
-
+# NEWEST taxonomy of outcomes (used for zero_shot, few_shot w/ qwen + llama)
 ADVANCED_EXTRACTION_OUTCOMES = [
     "S1",
     "S2",
