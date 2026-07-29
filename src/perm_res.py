@@ -29,7 +29,7 @@ def get_layer1(r2_df):
     return r2s_1
 
 
-def get_layer2(r2_df):
+def get_layer2(r2_df, filter_best_Q):
     r2s_2 = r2_df[r2_df["num_layers"] == 2]
 
     r2s_2_S_base = r2s_2[r2s_2["two_layer_base"] == "S"]
@@ -39,20 +39,27 @@ def get_layer2(r2_df):
     r2s_2_S_base = r2s_2_S_base.sort_values(by="diff", ascending=False)
 
     r2s_2_Q_base = r2s_2[r2s_2["two_layer_base"] == "Q"]
-    r2s_2_Q_base["best_Q"] = max(r2s_2_Q_base["r2_Q_mean"])
-    r2s_2_Q_base["diff"] = round(r2s_2_Q_base["r2_T_mean"] - r2s_2_Q_base["best_Q"], 3)
+    best_Q = max(r2s_2_Q_base["r2_Q_mean"])
+    if filter_best_Q:
+        r2s_2_Q_base = r2s_2_Q_base[r2s_2_Q_base["r2_Q_mean"] == best_Q]
+    else:
+        r2s_2_Q_base["best_Q"] = best_Q
+    r2s_2_Q_base["diff"] = round(r2s_2_Q_base["r2_T_mean"] - best_Q, 3)
     r2s_2_Q_base = r2s_2_Q_base.sort_values(by="diff", ascending=False)
 
     return r2s_2_S_base, r2s_2_Q_base
 
 
-def get_layer3(r2_df):
+def get_layer3(r2_df, filter_best_Q):
     r2s_3 = r2_df[r2_df["num_layers"] == 3]
 
     best_3Q_row = r2s_3.sort_values(by="r2_Q_mean", ascending=False).iloc[0]
     best_3Q_alpha = best_3Q_row["alpha"].split("_")[0]
     best_3Q_val = best_3Q_row["r2_Q_mean"]
-    r2s_3["best_Q_alpha"] = f"{best_3Q_val}_{best_3Q_alpha}"
+    if filter_best_Q:
+        r2s_3 = r2s_3[r2s_3["r2_Q_mean"] == best_3Q_val]
+    else:
+        r2s_3["best_Q_alpha"] = f"{best_3Q_val}_{best_3Q_alpha}"
     r2s_3["diff"] = round(r2s_3["r2_T_mean"] - best_3Q_val, 3)
     r2s_3 = r2s_3.sort_values(by="diff", ascending=False)
     return r2s_3
@@ -115,7 +122,7 @@ def get_collapsed_null(
     impact_type,
     keep_cols,
     fill_na_cols,
-    perm_dir_base=BASE_PATH / "perm_res" / "r2_tables",
+    perm_dir_base=BASE_PATH / "results/perm_res" / "r2_tables",
 ):
     """
     Creates null distribution by first collapsing hypothesis axis (min) then collapsing model axis (max)
@@ -267,6 +274,7 @@ def get_avg_r2(df):
         "desc_seg",
         "alpha",
         "two_layer_base",
+        "temp",
     ]
     r2_df = (
         df.groupby(params + ["repeat"])

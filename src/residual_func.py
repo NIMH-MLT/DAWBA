@@ -87,7 +87,7 @@ def get_lr_output(
     two_layer_base,  # first estimator type for 2 layer iteration; one of 'Q', 'T'
     linear_type="ridge",
     hypothesis_shuffle=None,  # None, 'text'
-    scale=False,
+    # scale=False,
 ):
     """
     - For a given split during CV, subset into train/test sets
@@ -112,24 +112,35 @@ def get_lr_output(
     prob_col, prob_outcomes = get_prob_col_outcomes(
         agg_type=agg_type, desc_seg_type=desc_seg_type, impact_type=impact_type
     )
-    if scale:
-        from sklearn.preprocessing import MinMaxScaler
 
-        scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
-        X_train[prob_outcomes] = scaler.fit_transform(X_train[prob_outcomes])
-        X_test[prob_outcomes] = scaler.transform(X_test[prob_outcomes])
-    # parent
-    if impact_type == "parent":
-        outcome_sub_list = [
-            outcome for outcome in prob_outcomes if outcome not in ["f1"]
-        ]
-    elif impact_type == "self":
-        outcome_sub_list = [
-            outcome for outcome in prob_outcomes if outcome not in ["d2", "e1"]
-        ]
-    # self
-    else:
-        raise ValueError(f"Unrecognized impact: {impact_type}")
+    # #scale = True #exp1/2
+    # scale = False #exp3
+    # if desc_seg_type in ["turns", "pt_noshort"]:
+    #     ## ONLY for impactme LR models
+    #     if impact_type == "self":
+    #         remove_cols = ['d2', 'e1']
+    #         scale_cols = ['a2', 'a3', 'a5', 'b2', 'b3', 'c2', 'c3', 'd3', 'd4', 'd5', 'd6', 'e2', 'f3', 'g1', 'g2']
+    #     # parent
+    #     elif impact_type == "parent":
+    #         remove_cols = ['a4', 'f1']
+    #         scale_cols = ['d3', 'd6', 'g2']
+    #     # self
+    #     else:
+    #         raise ValueError(f"Unrecognized impact: {impact_type}")
+    #     if scale:
+    #         from sklearn.preprocessing import MinMaxScaler
+
+    #         scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
+    #         X_train[scale_cols] = scaler.fit_transform(X_train[scale_cols])
+    #         X_test[scale_cols] = scaler.transform(X_test[scale_cols])
+
+    #     outcome_sub_list = [ # exp1/3
+    #         outcome for outcome in prob_outcomes if outcome not in remove_cols
+    #     ]
+    #     #outcome_sub_list = None # exp2
+    # else:
+    #     outcome_sub_list = None
+    outcome_sub_list = None
     # ================> Set up model
     model_args = dict(
         num_layers=num_layers,
@@ -168,6 +179,8 @@ def get_lr_output(
 
     # Predictions
     output_df = get_output_df(num_layers, X_test, y_test, pred_df)
+    output_df["split_id"] = split_id
+
     return perm_id_df, output_df, coef_df
 
 
@@ -176,7 +189,7 @@ def get_lr_output(
 ############################################################
 
 
-def build_model(config_dict, llama_model, data_dir, scale=False):
+def build_model(config_dict, data_dir, temp, llm_model, scale=False):
     """
     - Fit a ResidualRegressor given some model configuration
     - Returns trained model, learned feature coefs, and loaded train DF
@@ -184,10 +197,11 @@ def build_model(config_dict, llama_model, data_dir, scale=False):
     ## Get train data
     data_path = get_df_path(
         df_dir=data_dir,
-        llama_model=llama_model,
+        llm_model=llm_model,
         agg_type=config_dict["agg_type"],
         desc_seg_type=config_dict["desc_seg_type"],
         impact_type=config_dict["impact_type"],
+        temp=temp,
     )
     train_df = pd.read_parquet(data_path)
     df_expand, prob_cols = expand_text(

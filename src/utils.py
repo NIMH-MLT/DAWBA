@@ -3,24 +3,27 @@
 import pandas as pd
 
 
-def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type):
+def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
     """
     Helper returning path to train df given model configuration
     """
-    if desc_seg_type in ["zero_shot", "few_shot"]:
-        llm_model_clean = "qwen" if llm_model == "Qwen" else "llama"
+    if desc_seg_type in ["shot_zero", "shot_few"]:
+        # remove -
+        agg_type_clean = agg_type.split("-")[0]
         return (
             df_dir
-            / "new_model_shot/cleaned"
-            / llm_model_clean
+            / "final_cleaned"
+            / llm_model
+            / f"temp_{temp}"
             / desc_seg_type
-            / agg_type
+            / agg_type_clean
             / f"{impact_type}.parquet"
         )
     elif agg_type in ["avg", "max", "block"]:
         intermediate_dir = "w_probs"
-    elif agg_type in ["binary", "proba-limited"]:
-        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type}"
+    elif agg_type in ["binary-og", "proba-limited-og"]:
+        agg_type_clean = "-".join(agg_type.split("-")[:-1])
+        intermediate_dir = f"w_0_shot_probs/temp_0.6/{agg_type_clean}"
     else:
         raise ValueError(f"Unreccognized agg type: {agg_type}")
     return (
@@ -29,17 +32,17 @@ def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type):
 
 
 def get_prob_col_outcomes(agg_type, desc_seg_type, impact_type):
-    if desc_seg_type in ["zero_shot", "few_shot"]:
+    if desc_seg_type in ["shot_zero", "shot_few"]:
         return "", ADVANCED_EXTRACTION_OUTCOMES
     elif agg_type in ["avg", "max", "block"]:
         return f"prob_vector_{agg_type}", IMPACTME_OUTCOMES_LR
-    elif agg_type in ["proba-limited", "binary"]:
+    elif agg_type in ["proba-limited-og", "binary-og"]:
         prob_col = "open_text_block_0_shot"
-        if desc_seg_type == "new":
-            prob_outcomes = IMPACTME_OUTCOMES_FULL
-        elif desc_seg_type == "expanded":
+        # if desc_seg_type == "new":
+        #     prob_outcomes = IMPACTME_OUTCOMES_FULL
+        if desc_seg_type == "expanded":
             prob_outcomes = OUTCOMES_EXPAND
-        elif desc_seg_type in ["original", "augment_neg", "augment"]:
+        elif desc_seg_type in ["original"]:  # "augment_neg", "augment"]:
             prob_outcomes = IMPACTME_OUTCOMES_SHOT
         elif desc_seg_type == "combined":  # combines expanded + original
             prob_outcomes = [f"{col}_impactme" for col in IMPACTME_OUTCOMES_SHOT] + [
@@ -58,13 +61,16 @@ def expand_text(df, agg_type, desc_seg_type, impact_type):
     prob_col, prob_outcomes = get_prob_col_outcomes(
         agg_type=agg_type, desc_seg_type=desc_seg_type, impact_type=impact_type
     )
-    new_cols = pd.DataFrame(
-        df[prob_col].tolist(), columns=prob_outcomes, index=df.index
-    )
-    df = df.join(new_cols)
-    df = df.drop(columns=prob_col)
+    if desc_seg_type in ["shot_zero", "shot_few"]:
+        return df, prob_outcomes
+    else:
+        new_cols = pd.DataFrame(
+            df[prob_col].tolist(), columns=prob_outcomes, index=df.index
+        )
+        df = df.join(new_cols)
+        df = df.drop(columns=prob_col)
 
-    return df, prob_outcomes
+        return df, prob_outcomes
 
 
 def get_perm_seed(perm_dir):
@@ -297,11 +303,11 @@ ALPHA_LIST = [
     50.0,
     75.0,
     100.0,
-    125.0,
-    150.0,
-    200.0,
-    300.0,
-    500.0
+    # 125.0,
+    # 150.0,
+    # 200.0,
+    # 300.0,
+    # 500.0
 ]
 # ALPHA_LIST = [
 #     0.1,

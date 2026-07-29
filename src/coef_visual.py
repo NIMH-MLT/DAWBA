@@ -3,22 +3,16 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
 
-def get_pivot(
-    df,
-    agg_type,
-    llama,
-    desc_seg,
-    alpha,
-    num_layers,
-):
+def get_pivot(df, agg_type, llm_model, desc_seg, alpha, num_layers, temp):
     df = df.fillna("None")
     df["repeat_split_id"] = df["repeat"].astype(str) + "_" + df["split_id"].astype(str)
     sub_df = df[
         (df["agg_type"] == agg_type)
-        & (df["llama_model"] == llama)
+        & (df["llm_model"] == llm_model)
         & (df["desc_seg"] == desc_seg)
         & (df["alpha"] == alpha)
         & (df["num_layers"] == num_layers)
+        & (df["temp"] == temp)
     ][["repeat_split_id", "stage", "feature", "coef"]]
     sub_df = sub_df.reset_index(drop=True)
     sub_df["stage_feat"] = sub_df["stage"] + "_" + sub_df["feature"]  # y-axis
@@ -28,7 +22,12 @@ def get_pivot(
 
 
 def plot_heatmap(
-    pivot, title="avg_val by Repeat and Feature", vmin=-3, vmax=3, xlabel="Repeat", fmt='.2f'
+    pivot,
+    title="avg_val by Repeat and Feature",
+    vmin=-3,
+    vmax=3,
+    xlabel="Repeat",
+    fmt=".2f",
 ):
     ## PLOT
     cmap = LinearSegmentedColormap.from_list(

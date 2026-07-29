@@ -10,7 +10,6 @@ initial_everything/
 ## Extras
 */__pycache__/
 swarm_dir/
-perm_res/
-perm_res_final/
+results/
 src/old
-tests/
+tests_old/
