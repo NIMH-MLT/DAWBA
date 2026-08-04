@@ -189,7 +189,9 @@ def get_lr_output(
 ############################################################
 
 
-def build_model(config_dict, data_dir, temp, llm_model, scale=False):
+def build_model(
+    config_dict, data_dir, temp, llm_model, two_layer_base=None, scale=False
+):
     """
     - Fit a ResidualRegressor given some model configuration
     - Returns trained model, learned feature coefs, and loaded train DF
@@ -220,7 +222,7 @@ def build_model(config_dict, data_dir, temp, llm_model, scale=False):
         X_train[prob_cols] = scaler.fit_transform(X_train[prob_cols])
 
     # Build + fit model
-    model = ResidualRegressor(**config_dict, two_layer_base=None)
+    model = ResidualRegressor(**config_dict, two_layer_base=two_layer_base)
     model.fit(X_train, y_train, shuffle=None, perm_dir=None)
 
     # Process coef df
