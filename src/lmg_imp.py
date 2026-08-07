@@ -155,7 +155,7 @@ def get_perm_feat_imp(
             tot_r2 += delta
             r2_prev = r2_new
         # Sum of all incrimental r2 should = r2 of full model (last run of outer-loop ^)
-        assert tot_r2 == r2_new, f"TOT: {tot_r2}; NEW: {r2_new}"
+        assert np.isclose(tot_r2, r2_new, atol=1e-8), f"TOT: {tot_r2}; NEW: {r2_new}"
         return contributions
 
     ## Aggregate across og/reverse perms
@@ -186,7 +186,7 @@ def main(argv=None):
     all_perm_imp_df = lmg_imp_wrapper(
         config_dict=args.config_dict,
         n_cv_repeats=args.n_cv_repeats,
-        n_cv_splits=args.n_cv_repeats,
+        n_cv_splits=args.n_cv_splits,
         seed=args.seed,
         df_path=args.df_path,
         n_jobs=args.n_jobs,

@@ -3,7 +3,9 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 
 
-def get_pivot(df, agg_type, llm_model, desc_seg, alpha, num_layers, temp):
+def get_pivot(
+    df, agg_type, llm_model, desc_seg, alpha, num_layers, temp, two_layer_base
+):
     df = df.fillna("None")
     df["repeat_split_id"] = df["repeat"].astype(str) + "_" + df["split_id"].astype(str)
     sub_df = df[
@@ -13,6 +15,7 @@ def get_pivot(df, agg_type, llm_model, desc_seg, alpha, num_layers, temp):
         & (df["alpha"] == alpha)
         & (df["num_layers"] == num_layers)
         & (df["temp"] == temp)
+        & (df["two_layer_base"] == two_layer_base)
     ][["repeat_split_id", "stage", "feature", "coef"]]
     sub_df = sub_df.reset_index(drop=True)
     sub_df["stage_feat"] = sub_df["stage"] + "_" + sub_df["feature"]  # y-axis
