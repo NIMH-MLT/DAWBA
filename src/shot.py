@@ -1,6 +1,11 @@
 # shot.py
 import os
 from src.config import BASE_PATH
+from src.utils import (
+    OUTCOMES_EXPAND,
+    IMPACTME_OUTCOMES_SHOT,
+    OUTCOMES_COMBINED,
+)
 
 import json
 import argparse
@@ -11,6 +16,161 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 import numpy as np
+
+
+def make_shot_cmd(
+    cur_model,
+    outcome_list,
+    impact_type_list,
+    base_df_dir,
+    json_config,
+    gpu_group,
+    outcome_desc_type,
+    n_shot,
+    output_type,
+):
+    temp = json_config["temp"]
+    log_dir = (
+        BASE_PATH
+        / "logs"
+        / f"shot_{n_shot}"
+        / f"temp_{temp}"
+        / output_type
+        / cur_model
+        / outcome_desc_type
+    )
+    save_dir = (
+        BASE_PATH
+        / "data"
+        / f"w_{n_shot}_shot_probs"
+        / f"temp_{temp}"
+        / output_type
+        / cur_model
+        / outcome_desc_type
+    )
+    cmd = [
+        "python",
+        "src/shot_controller.py",
+        "--gpu-groups",
+        *gpu_group,
+        "--outcomes",
+        *outcome_list,
+        "--impact_types",
+        *impact_type_list,
+        "--llm_config",
+        json.dumps(json_config),
+        "--base_df_dir",
+        str(base_df_dir),
+        "--save_dir",
+        str(save_dir),
+        "--log_dir",
+        str(log_dir),
+        "--outcome_desc_type",
+        outcome_desc_type,
+        "--n_shot",
+        str(n_shot),
+        "--output_type",
+        output_type,
+    ]
+    return cmd
+
+
+def get_outcome_list(desc_type):
+    if desc_type == "original":
+        return IMPACTME_OUTCOMES_SHOT
+    elif desc_type == "expanded":
+        return OUTCOMES_EXPAND
+    elif desc_type == "combined":
+        return OUTCOMES_COMBINED
+    else:
+        raise ValueError(f"Unrecognized desc_type: {desc_type}")
+
+
+def setup_logger(log_path):
+    log_path = Path(log_path)
+    if log_path.exists():
+        log_path.unlink()
+    log_path.parent.mkdir(exist_ok=True, parents=True)
+    logging.getLogger("0-shot").setLevel(logging.WARNING)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s - %(message)s",
+        filemode="w",
+        force=True,
+    )
+
+
+def combine_original_expanded(save_path, impact_type, log_path):
+    """
+    Combine the original and expanded outcome descriptions for each participant.
+    """
+    setup_logger(log_path=log_path)
+    logging.info(
+        f"Combining original and expanded outcome descriptions for impact_type={impact_type}..."
+    )
+    base_path = save_path.parent.parent
+    file_name = save_path.name
+    original_output_path = base_path / "original" / file_name
+    expanded_output_path = base_path / "expanded" / file_name
+
+    if not original_output_path.exists():
+        raise ValueError(f"Original output file does not exist: {original_output_path}")
+
+    if not expanded_output_path.exists():
+        raise ValueError(f"Expanded output file does not exist: {expanded_output_path}")
+
+    shot_col = "open_text_block_0_shot"
+
+    original_df = pd.read_parquet(original_output_path)
+    original_df_sub = original_df[["DAWBA_ID", "open_text_block_0_shot"]].copy()
+    original_df_sub[shot_col] = original_df_sub[shot_col].apply(
+        lambda x: np.array(x) if isinstance(x, list) else x
+    )
+
+    expanded_df = pd.read_parquet(expanded_output_path)
+    expanded_df_sub = expanded_df[["DAWBA_ID", "open_text_block_0_shot"]].copy()
+    expanded_df_sub[shot_col] = expanded_df_sub[shot_col].apply(
+        lambda x: np.array(x) if isinstance(x, list) else x
+    )
+
+    combined_df = pd.merge(
+        original_df_sub,
+        expanded_df_sub,
+        on="DAWBA_ID",
+        suffixes=("_original", "_expanded"),
+        how="inner",
+        validate="one_to_one",
+    )
+    # Concat such that expanded is original + expanded (in that order)
+    combined_df["open_text_block_0_shot"] = [
+        np.concatenate([o, e])
+        for o, e in zip(
+            combined_df["open_text_block_0_shot_original"],
+            combined_df["open_text_block_0_shot_expanded"],
+        )
+    ]
+    final_df = original_df.drop(columns=[shot_col]).merge(
+        combined_df[["DAWBA_ID", shot_col]],
+        on="DAWBA_ID",
+        how="inner",
+        validate="one_to_one",
+    )
+    missing = set(original_df["DAWBA_ID"]) - set(expanded_df["DAWBA_ID"])
+    if missing:
+        raise ValueError(f"IDs missing from expanded output: {sorted(missing)}")
+    assert len(final_df) == len(original_df), "Length mismatch after merging"
+    assert shot_col in final_df.columns, f"{shot_col} not found in final_df columns"
+    num_res = len(final_df[shot_col].iloc[0])
+    assert num_res == len(original_df[shot_col].iloc[0]) + len(
+        expanded_df[shot_col].iloc[0]
+    ), "Length mismatch in concatenated shot results"
+    for row in final_df.itertuples():
+        assert (
+            len(row.open_text_block_0_shot) == num_res
+        ), f"Length mismatch for DAWBA_ID {row.DAWBA_ID}"
+
+    export_df(save_path=save_path, df=final_df, impact_type=impact_type)
 
 
 ########################################################################
@@ -114,37 +274,26 @@ Response options:
 
 
 def get_prompt_meta(outcome_desc_type):
-    if outcome_desc_type == "new":  # impactme outcomes + hopelessness and pessimism
-        outcome_desc_path = (
-            BASE_PATH / "data" / "complete_raw" / "outcome_desc_update.xlsx"
-        )
-        descr_col = "Description"
-        outcome_proper_col = "Name"
-    elif outcome_desc_type == "expanded":  # 80 new outcomes
+    """
+    outcome_desc_type: str
+        One of ['expanded', 'original']
+    """
+    if outcome_desc_type == "expanded":  # 80 new outcomes
         outcome_desc_path = (
             BASE_PATH / "data" / "complete_raw" / "80_Depression_Outcomes.xlsx"
         )
         descr_col = "Definition"
         outcome_proper_col = "Outcome"
-    else:  # impactme outcomes
+    elif outcome_desc_type == "original":  # impactme outcomes
         outcome_desc_path = (
             BASE_PATH / "data" / "complete_raw" / "impactme_outcome_desc.xlsx"
         )
         outcome_proper_col = "Name"
-        if outcome_desc_type == "original":
-            descr_col = "Description_Original"
-        elif outcome_desc_type == "short":
-            descr_col = "Description_Short"
-        elif outcome_desc_type == "augment":
-            descr_col = "Description_Augment"
-        elif outcome_desc_type == "augment_neg":
-            descr_col = "Description_Augment_Negative"
-        elif outcome_desc_type == "neutral":
-            descr_col = "Description_Neutral"
-        else:
-            raise ValueError(
-                f"`outcome_desc_type` must be one of ['short', 'original', 'augment', 'augment_neg', 'new', 'expanded']. Got {outcome_desc_type}."
-            )
+        descr_col = "Description_Original"
+    else:
+        raise ValueError(
+            f"`outcome_desc_type` must be one of ['expanded', 'original']. Got {outcome_desc_type}."
+        )
     return outcome_desc_path, descr_col, outcome_proper_col
 
 
@@ -153,7 +302,7 @@ def gen_prompt(cur_outcome, text_, impact_type, outcome_desc_type, n_shot=0):
     Parameters
     ---------
     outcome_desc_type: str
-        One of ['short', 'original', 'augment', 'augment_neg', 'new', 'expanded']
+        One of ['expanded', 'original']
     """
     ## Param validation
     if impact_type not in ["self", "parent"]:
@@ -440,7 +589,7 @@ def get_shot_results(
     Parameters
     ---------
     outcome_desc_type: str
-        One of ['original', 'short', 'augment', 'augment_neg']
+        One of ['original', 'expanded', 'combined']
     output_type: str
         One of ['binary', 'proba', 'proba-limited']
     """
@@ -454,18 +603,7 @@ def get_shot_results(
     if not visible:
         raise RuntimeError("CUDA_VISIBLE_DEVICES is not set")
     ## =========================> Logger set up
-    log_path = Path(log_path)
-    if log_path.exists():
-        log_path.unlink()
-    log_path.parent.mkdir(exist_ok=True, parents=True)
-    logging.getLogger("0-shot").setLevel(logging.WARNING)
-    logging.basicConfig(
-        filename=log_path,
-        level=logging.INFO,
-        format="%(asctime)s - %(message)s",
-        filemode="w",
-        force=True,
-    )
+    setup_logger(log_path=log_path)
     pid = os.getpid()
     logging.info(f"PID={pid} Impat Type={impact_type} GPUs={visible}")
     logging.info(f"n-shot: {n_shot} temp: {temp} model_id: {model_id}")
@@ -534,19 +672,15 @@ def main():
     parser.add_argument("--outcome_list", required=True, nargs="+")
     parser.add_argument("--impact_type", required=True, choices=["parent", "self"])
     parser.add_argument("--llm_config", required=True)
-    parser.add_argument("--base_df_path", required=True)
-    parser.add_argument("--save_path", required=True)
-    parser.add_argument("--log_path", required=True)
+    parser.add_argument("--base_df_path", required=True, type=Path)
+    parser.add_argument("--save_path", required=True, type=Path)
+    parser.add_argument("--log_path", required=True, type=Path)
     parser.add_argument(
         "--outcome_desc_type",
         required=True,
         choices=[
-            "short",
             "original",
-            "augment",
-            "augment_neg",
-            "neutral",
-            "new",
+            "combined",
             "expanded",
         ],
     )
@@ -563,17 +697,24 @@ def main():
     # Validate args
     llm_config = json.loads(args.llm_config)
     n_shot = int(args.n_shot)
-    get_shot_results(
-        outcome_names=args.outcome_list,
-        impact_type=args.impact_type,
-        llm_config=llm_config,
-        base_df_path=args.base_df_path,
-        save_path=args.save_path,
-        log_path=args.log_path,
-        outcome_desc_type=args.outcome_desc_type,
-        n_shot=n_shot,
-        output_type=args.output_type,
-    )
+    if args.outcome_desc_type == "combined":
+        combine_original_expanded(
+            save_path=args.save_path,
+            impact_type=args.impact_type,
+            log_path=args.log_path,
+        )
+    else:
+        get_shot_results(
+            outcome_names=args.outcome_list,
+            impact_type=args.impact_type,
+            llm_config=llm_config,
+            base_df_path=args.base_df_path,
+            save_path=args.save_path,
+            log_path=args.log_path,
+            outcome_desc_type=args.outcome_desc_type,
+            n_shot=n_shot,
+            output_type=args.output_type,
+        )
 
 
 if __name__ == "__main__":

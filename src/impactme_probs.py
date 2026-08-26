@@ -21,25 +21,22 @@ def validate_input(impact_type, model_name, impactme_seg_type):
         )
 
 
-def add_prob_vector_avg_max(embed_df, impact_type, outcome_order, lr_model_dict):
+def add_prob_vector_avg_max(embed_df_imp, impact_type, outcome_order, lr_model_dict):
+    embed_df = embed_df_imp.copy()
     text_cols = col_config_sensitivity[f"{impact_type}_text"]
     probs_by_text = {}  # {text_col: DF(n_participants x n_outcomes)}
     for text_col in text_cols:
-        ## If question not answered, fill probs with 0
-        if "Not answered" in embed_df[text_col]:
-            this_probs = {outcome_name: 0 for outcome_name in outcome_order}
-        else:
-            embed_col = f"{text_col}_embedding"
+        embed_col = f"{text_col}_embedding"
+        valid = ~(embed_df[text_col].str.contains("Not answered", na=True))
+        probs_df = pd.DataFrame(0.0, index=embed_df.index, columns=outcome_order)
+        if valid.any():
             ## ==========> Get probs
-            X = np.stack(embed_df[embed_col].values).astype(np.float16)
+            X = np.stack(embed_df.loc[valid, embed_col].values).astype(np.float32)
             if not torch.is_tensor(X):
                 X = torch.from_numpy(X)
-            this_probs = {}
             for outcome_name in outcome_order:
                 lr_model = lr_model_dict[outcome_name]
-                y_proba = lr_model.predict_proba(X)[:, 1]
-                this_probs[outcome_name] = y_proba
-        probs_df = pd.DataFrame(this_probs, index=embed_df.index)
+                probs_df.loc[valid, outcome_name] = lr_model.predict_proba(X)[:, 1]
         probs_by_text[text_col] = probs_df
 
     # 3D tensor: [participant, outcome, question]
@@ -60,7 +57,8 @@ def add_prob_vector_avg_max(embed_df, impact_type, outcome_order, lr_model_dict)
     return embed_df
 
 
-def add_prob_vector_block(embed_df, outcome_order, lr_model_dict):
+def add_prob_vector_block(embed_df_imp, outcome_order, lr_model_dict):
+    embed_df = embed_df_imp.copy()
     proba_dict = {}
     ## ==========> Get probs
     X = np.stack(embed_df["open_text_block_embedding"].values).astype(np.float16)
@@ -83,7 +81,11 @@ def add_prob_vector_block(embed_df, outcome_order, lr_model_dict):
 
 
 def add_prob_vector(
-    embed_path, impact_type, model_name, impactme_seg_type, export_path, make_0=True
+    embed_path,
+    impact_type,
+    model_name,
+    impactme_seg_type,
+    export_path,
 ):
     """
     Params
@@ -112,10 +114,15 @@ def add_prob_vector(
         )
     ## Add avg, max prob vectors from segments
     embed_df = add_prob_vector_avg_max(
-        embed_df, impact_type, outcome_order, lr_model_dict
+        embed_df_imp=embed_df,
+        impact_type=impact_type,
+        outcome_order=outcome_order,
+        lr_model_dict=lr_model_dict,
     )
     ## Add raw prob vector from block text
-    embed_df = add_prob_vector_block(embed_df, outcome_order, lr_model_dict)
+    embed_df = add_prob_vector_block(
+        embed_df_imp=embed_df, outcome_order=outcome_order, lr_model_dict=lr_model_dict
+    )
     # ====> Export
     if export_path.exists():
         export_path.unlink()

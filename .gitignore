@@ -14,3 +14,7 @@ swarm_dir/
 results/
 src/old
 tests_old/
+tests/
+data_old/
+logs/
+results_old/

@@ -1,9 +1,29 @@
+# embed.py
 import os
 import argparse
 import logging
 from pathlib import Path
 import pandas as pd
 import numpy as np
+
+
+def concat_question_answer(answer_df, question_df):
+    out = answer_df.copy()
+    assert out.isna().sum().sum() == 0
+    assert question_df.isna().sum().sum() == 0
+    for row in question_df.itertuples():
+        ## Get col name and question text
+        question_col = row.question_col.strip()
+        question_text = row.question_text
+        ## Append to appropriate col in df
+        out[question_col] = (
+            "Question: " + question_text + " Answer: " + out[question_col]
+        )
+    text_cols = list(question_df["question_col"].values)
+    out["open_text_block"] = (
+        out[text_cols].astype(str).agg("\n".join, axis=1).str.strip()
+    )
+    return out
 
 
 def import_df(import_path):
@@ -78,14 +98,14 @@ def gen_embeds(
     ## =======================> Loop through rows and embed for each text_col_name
     new_row_list = []
     for row_counter, (_, row) in enumerate(df_import.iterrows()):
+        assert "DAWBA_ID" in row
         ## ===================> Output progress
         logging.info(f"Row: {row_counter + 1} / {num_rows}")
         cur_row = row.to_dict().copy()
         new_entry_dict = {}
-        for col_counter, text_col_name in enumerate(text_col_names):
+        for text_col_name in text_col_names:
             ## ===================> Output progress
-            # logging.info(f"\t Col: {col_counter + 1} / {num_cols_to_embed}") --> nvm too much logging
-            text = getattr(row, text_col_name)
+            text = row[text_col_name]
             inputs = llama3_tokenizer_fast(text, return_tensors="pt")
             inputs = inputs.to("cuda")
             with torch.no_grad():
