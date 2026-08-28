@@ -1,3 +1,4 @@
+# coef_visual.py
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
@@ -17,6 +18,8 @@ def get_pivot(
         & (df["temp"] == temp)
         & (df["two_layer_base"] == two_layer_base)
     ][["repeat_split_id", "stage", "feature", "coef"]]
+    if len(sub_df) == 0:
+        raise ValueError("No data matches the specified configuration.")
     sub_df = sub_df.reset_index(drop=True)
     sub_df["stage_feat"] = sub_df["stage"] + "_" + sub_df["feature"]  # y-axis
     # Pivot: rows = stage_feat, columns = repeat, values = avg_coef

@@ -9,8 +9,9 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import LinearRegression, Ridge
 
+# TODO: sklearn compatability + __init__ args for all regressors
 
-## TODO: rename stage1, stage2, etc to stageSum, stageQuest, etc for readability
+
 class BaseRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
@@ -50,38 +51,40 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         prob_col, prob_outcomes = get_prob_col_outcomes(
             agg_type=self.agg_type,
             desc_seg_type=self.desc_seg_type,
-            impact_type=self.impact_type,
         )
         # Subset psychological text feats if prompted
         if self.outcome_sub_list is not None:
             # ensure passed outcomes are part of whole outcome list
             # print(prob_outcomes)
             if not set(self.outcome_sub_list).issubset(prob_outcomes):
-                print(set(self.outcome_sub_list) - set(prob_outcomes))
-                print(prob_col)
-                print(self.desc_seg_type)
-                print(
-                    [col for col in self.outcome_sub_list if col not in prob_outcomes]
+                raise ValueError(
+                    f"""Some specified outcomes are not in the available outcome list: \n
+                    In sublist but not available outcome list: {set(self.outcome_sub_list) - set(prob_outcomes)} \n
+                    Prob column name: {prob_col}\n
+                    Description/Segmentation type: {self.desc_seg_type}\n
+                    Available outcomes: {prob_outcomes}\n
+                    Specified outcomes: {self.outcome_sub_list}\n
+                    """
                 )
-                print(prob_outcomes)
             prob_outcomes = self.outcome_sub_list
         prob_vals = X[prob_outcomes].values
         prob_vec = np.vstack(prob_vals).astype(float)
         # Return all
         return quest_sum, quest_np, prob_vec
 
+    def _reported_stages(self):
+        """[(label, fitted_model, feature_names)] for stages that contribute to
+        the final prediction. Subclasses define which those are."""
+        raise NotImplementedError
+
     def get_coef_df(self):
-        # TODO: consider cases of 1-layer w/ Q or T; cases of 2-layer w/ Q base (QT instead of ST)
-        parts = [self._extract_coefs(self.stage1_, self._feat1, "stage1")]
-        if self.num_layers == 1:
-            return pd.concat(parts, ignore_index=True)
-        ## 2/3 layers
-        parts.append(self._extract_coefs(self.stage3_, self._feat3, "stage3"))
-        if self.num_layers == 3:
-            # only add stage2 info if 3 layers
-            # stage2 info == stage1 info when 2 layers
-            parts.append(self._extract_coefs(self.stage2_, self._feat2, "stage2"))
-        return pd.concat(parts, ignore_index=True)
+        return pd.concat(
+            [
+                self._extract_coefs(model, feats, label)
+                for label, model, feats in self._reported_stages()
+            ],
+            ignore_index=True,
+        )
 
     def _make_model(
         self,
@@ -90,7 +93,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
     ):
         """
         model_type: str
-            One of ['elastic', 'regular', 'ridge']
+            One of [''regular', 'ridge']
         """
         if model_type == "ridge":
             return Ridge(
@@ -103,14 +106,14 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
             return LinearRegression()
         else:
             raise ValueError(
-                f"Unrecognized model_type. Expected one of ['elastic', 'regular', 'ridge']. Got {model_type}"
+                f"Unrecognized model_type. Expected one of ['regular', 'ridge']. Got {model_type}"
             )
 
     def _extract_coefs(self, model, feature_names, stage_label):
         """
         Extract intercept + coefficients from a fitted sklearn linear model
         into a tidy DataFrame with columns [stage, feature, coef].
-        Works for LinearRegression, Ridge, and ElasticNet.
+        Works for LinearRegression and Ridge.
         """
         coef = np.atleast_1d(model.coef_).flatten()
         intercept = np.atleast_1d(model.intercept_).flatten()
@@ -120,6 +123,9 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         return pd.DataFrame(rows)
 
     def shuffle_vals(self, X, col_to_shuffle_np, perm_dir):
+        """
+        No longer used but keeping for legacy purposes
+        """
         ## Get permutation seed
         perm_seed = get_perm_seed(perm_dir=perm_dir)
         # Sort by DAWBA_ID to ensure canonical order regardless of input row order
@@ -145,6 +151,15 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
 class IndependentRegressor(BaseRegressor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+    def _reported_stages(self):
+        """Each stage is a standalone model on raw y, and fit() builds all three
+        regardless of num_layers -- so all three are reported."""
+        return [
+            ("stage1", self.stage1_, self._feat1),
+            ("stage2", self.stage2_, self._feat2),
+            ("stage3", self.stage3_, self._feat3),
+        ]
 
     def fit(self, X, y, shuffle=None, perm_dir=None):
         """
@@ -172,8 +187,9 @@ class IndependentRegressor(BaseRegressor):
         _, self._feat3 = get_prob_col_outcomes(
             agg_type=self.agg_type,
             desc_seg_type=self.desc_seg_type,
-            impact_type=self.impact_type,
         )
+        if self.outcome_sub_list is not None:
+            self._feat3 = list(self.outcome_sub_list)
 
         ## Layer 1 — Sum scores
         self.stage1_ = self._make_model(
@@ -231,6 +247,33 @@ class ResidualRegressor(BaseRegressor):
                 f"two_layer_base must be not None exactly when num_layers=2. Got: two_layer_base:{self.two_layer_base}; num_layers:{self.num_layers}"
             )
 
+    def _reported_stages(self):
+        """A stage is reported iff predict_all adds its prediction:
+        3 layers      -> S, Q, T
+        2 layers, "S" -> S, T   (stage2_ == stage1_; reporting both would
+                                 double-count one set of coefficients)
+        2 layers, "Q" -> Q, T   (stage1_ is fit but zeroed in predict_all)
+        """
+        stages = []
+        if self.num_layers == 3:
+            stages.append(("stage1", self.stage1_, self._feat1))
+            stages.append(("stage2", self.stage2_, self._feat2))
+        elif self.two_layer_base == "S":
+            stages.append(("stage1", self.stage1_, self._feat1))
+        elif self.two_layer_base == "Q":
+            stages.append(("stage2", self.stage2_, self._feat2))
+        else:
+            raise ValueError(
+                f"two_layer_base must be one of ['S','Q']. Got {self.two_layer_base}"
+            )
+        stages.append(("stage3", self.stage3_, self._feat3))
+
+        seen = []
+        for _, model, _ in stages:
+            assert not any(model is s for s in seen), "stage reported twice"
+            seen.append(model)
+        return stages
+
     def fit(self, X, y, shuffle=None, perm_dir=None):
         """
         Use residual method
@@ -255,8 +298,9 @@ class ResidualRegressor(BaseRegressor):
         _, self._feat3 = get_prob_col_outcomes(
             agg_type=self.agg_type,
             desc_seg_type=self.desc_seg_type,
-            impact_type=self.impact_type,
         )
+        if self.outcome_sub_list is not None:
+            self._feat3 = list(self.outcome_sub_list)
 
         ## Layer 1 — Sum scores
         self.stage1_ = self._make_model(
@@ -308,7 +352,7 @@ class ResidualRegressor(BaseRegressor):
                     f"two_layer_base must be one of ['S', 'Q']. Got: {self.two_layer_base}"
                 )
 
-        ## Train with elastic net
+        ## Train with ridge
         self.stage3_ = self._make_model(
             alpha=self.alpha3,
             model_type=self.linear_type,

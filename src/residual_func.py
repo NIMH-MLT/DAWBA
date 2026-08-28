@@ -3,11 +3,8 @@ from src.utils import col_config_sensitivity, get_prob_col_outcomes
 from src.Regressor import IndependentRegressor, ResidualRegressor
 from src.utils import get_df_path, expand_text
 from src.coef_visual import plot_heatmap
-from joblib import Parallel, delayed
 
 import pandas as pd
-import numpy as np
-from sklearn.metrics import r2_score
 
 
 def get_output_df(num_layers, test_set, y_test, pred_df):
@@ -46,7 +43,7 @@ def prep_train_test(base_df, split_id, impact_type, agg_type, desc_seg_type):
     """
     if desc_seg_type in ["zero_shot", "few_shot"]:
         df_expand = base_df
-        _, prob_cols = get_prob_col_outcomes(agg_type, desc_seg_type, impact_type)
+        _, prob_cols = get_prob_col_outcomes(agg_type, desc_seg_type)
     else:
         # Expand text prob vectors to make probs granular cols
         df_expand, prob_cols = expand_text(
@@ -61,6 +58,7 @@ def prep_train_test(base_df, split_id, impact_type, agg_type, desc_seg_type):
     train_set = df_expand[df_expand["split_id"] != split_id].reset_index(drop=True)
     assert len(df_expand) != 0
     assert len(test_set) + len(train_set) == len(df_expand)
+    assert len(test_set) > 0
 
     # Clean Train + Test y
     target_col = f"impact_score_{impact_type}"
@@ -110,36 +108,8 @@ def get_lr_output(
         desc_seg_type=desc_seg_type,
     )
     prob_col, prob_outcomes = get_prob_col_outcomes(
-        agg_type=agg_type, desc_seg_type=desc_seg_type, impact_type=impact_type
+        agg_type=agg_type, desc_seg_type=desc_seg_type
     )
-
-    # #scale = True #exp1/2
-    # scale = False #exp3
-    # if desc_seg_type in ["turns", "pt_noshort"]:
-    #     ## ONLY for impactme LR models
-    #     if impact_type == "self":
-    #         remove_cols = ['d2', 'e1']
-    #         scale_cols = ['a2', 'a3', 'a5', 'b2', 'b3', 'c2', 'c3', 'd3', 'd4', 'd5', 'd6', 'e2', 'f3', 'g1', 'g2']
-    #     # parent
-    #     elif impact_type == "parent":
-    #         remove_cols = ['a4', 'f1']
-    #         scale_cols = ['d3', 'd6', 'g2']
-    #     # self
-    #     else:
-    #         raise ValueError(f"Unrecognized impact: {impact_type}")
-    #     if scale:
-    #         from sklearn.preprocessing import MinMaxScaler
-
-    #         scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
-    #         X_train[scale_cols] = scaler.fit_transform(X_train[scale_cols])
-    #         X_test[scale_cols] = scaler.transform(X_test[scale_cols])
-
-    #     outcome_sub_list = [ # exp1/3
-    #         outcome for outcome in prob_outcomes if outcome not in remove_cols
-    #     ]
-    #     #outcome_sub_list = None # exp2
-    # else:
-    #     outcome_sub_list = None
     outcome_sub_list = None
     # ================> Set up model
     model_args = dict(

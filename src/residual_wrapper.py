@@ -1,3 +1,5 @@
+# residual_wrapper.py
+
 from src.utils import get_df_path
 from src.residual_preds import loop_through_resid_params
 
@@ -13,7 +15,13 @@ from joblib import Parallel, delayed
 
 
 class ParquetStreamWriter:
-    """Append DataFrames to a single parquet file as row groups."""
+    """
+
+    Append DataFrames to a single parquet file as row groups.
+
+    **Written in collaboration w/ Claude Opus 4.8**
+
+    """
 
     def __init__(self, path, buffer_rows=200_000, expected_columns=None):
         path.parent.mkdir(exist_ok=True, parents=True)
@@ -80,30 +88,57 @@ def is_good_config(desc_seg, model_name, prob_agg, temp):
     """
     Only need to check in case of shot. LR case is dealt with at higher level
     """
+    ALLOWED_DICT = {
+        "impactmeLR": {
+            "desc_seg": ["turns", "pt_noshort"],
+            "model_name": "Llama-3.3-70B-Instruct",
+            "temp": 0.6,
+        },
+        "new_shot": {
+            "desc_seg": ["shot_zero", "shot_few"],
+            "model_name": ["Llama-3.3-70B-Instruct", "gemini-2.5-pro", "Qwen3.6-27B"],
+            "temp": {
+                "gemini-2.5-pro": [0, 0.4, 0.8, 1.2, 1.6, 2.0],
+                "Llama-3.3-70B-Instruct": [0, 0.2, 0.4, 0.6, 0.8, 1.0],
+                "Qwen3.6-27B": [0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            },
+        },
+        "og_shot": {
+            "desc_seg": ["original", "expanded", "combined"],
+            "model_name": "Llama-3.3-70B-Instruct",
+            "temp": 0.6,
+        },
+    }
     # impactme LR
     if prob_agg in ["block", "avg", "max"]:
         if (
-            desc_seg not in ["turns", "pt_noshort"]
-            or model_name != "Llama-3.3-70B-Instruct"
-            or temp != 0.6
+            desc_seg not in ALLOWED_DICT["impactmeLR"]["desc_seg"]
+            or model_name != ALLOWED_DICT["impactmeLR"]["model_name"]
+            or temp != ALLOWED_DICT["impactmeLR"]["temp"]
         ):
             return False
     # case of new shot iteration
-    elif desc_seg in ["shot_zero", "shot_few"]:
-        if prob_agg not in ["binary-new", "scale-new"]:
+    elif prob_agg in ["binary-new", "scale-new"]:
+        if (
+            desc_seg not in ALLOWED_DICT["new_shot"]["desc_seg"]
+            or model_name not in ALLOWED_DICT["new_shot"]["model_name"]
+            or temp not in ALLOWED_DICT["new_shot"]["temp"][model_name]
+        ):
             return False
     # case of old shot iteration
-    else:  # desc_seg--> original, expanded, combined
+    elif prob_agg in ["proba-limited-og", "binary-og"]:
         if (
-            (model_name in ["Qwen3.6-27B", "gemini-2.5-pro"])
-            or (temp != 0.6)
-            or (prob_agg not in ["proba-limited-og", "binary-og"])
+            desc_seg not in ALLOWED_DICT["og_shot"]["desc_seg"]
+            or model_name != ALLOWED_DICT["og_shot"]["model_name"]
+            or temp != ALLOWED_DICT["og_shot"]["temp"]
         ):
             return False
         ## Additionally, skip og binary in case of expanded
         # since its covered by new shot iteration
         elif (desc_seg == "expanded") & (prob_agg == "binary-og"):
             return False
+    else:
+        return False
     return True
 
 
@@ -216,7 +251,7 @@ def loop_through_params(
                 jobs.append((num_layers, agg_type, llm_model, desc_seg, temp))
     tot_jobs = len(jobs)
     print(f"total jobs: {tot_jobs}")
-    n_jobs = min(tot_jobs, 32)
+    n_jobs = min(tot_jobs, 14)
     Parallel(n_jobs=n_jobs, verbose=10)(
         delayed(_run_one_config)(
             num_layers=num_layers,
@@ -274,9 +309,6 @@ def aggregate_and_export(
     pred_writer = ParquetStreamWriter(export_path_preds, expected_columns=PRED_COLS)
     id_writer = ParquetStreamWriter(export_path_ids)
     coef_writer = ParquetStreamWriter(export_path_coefs)
-    # pred_list = []
-    # id_list = []
-    # coef_list = []
     try:
         for repeat in range(n_repeats):
             ref_ids = None
@@ -349,7 +381,6 @@ def aggregate_and_export(
                             )
                             pred_writer.write(df_preds.assign(**meta))
                             del df_preds  # free space
-                            # pred_list.append(df_preds.assign(**meta))
 
                             ## IDs ##
                             df_ids = pd.read_parquet(import_dir / "perm_ids.parquet")
@@ -360,29 +391,15 @@ def aggregate_and_export(
                                     df_ids
                                 ), f"perm ID mismatch at {import_dir}"
                             id_writer.write(df_ids.assign(**meta))
-                            del df_ids
-
-                            # df_ids = pd.read_parquet(import_dir / "perm_ids.parquet")
-                            # id_check_list.append(df_ids)
-                            # id_list.append(df_ids.assign(**meta))
+                            del df_ids  # free space
 
                             ## Coefs ##
                             df_coefs = pd.read_parquet(import_dir / "coefs.parquet")
                             coef_writer.write(df_coefs.assign(**meta))
-                            # coef_list.append(df_coefs.assign(**meta))
-
-            # Ensure permuted IDs are consistent across all model configurations for this repeat
-            # assert all(id_check_list[0].equals(s) for s in id_check_list)
     finally:
         pred_writer.close()
         id_writer.close()
         coef_writer.close()
-
-    # # Concat lists of dfs
-    # pred_df_combined = pd.concat(pred_list, ignore_index=True)
-    # id_df_combined = pd.concat(id_list, ignore_index=True)
-    # coef_df_combined = pd.concat(coef_list, ignore_index=True)
-    # return pred_df_combined, id_df_combined, coef_df_combined
 
 
 def export_df(export_path, df):
@@ -428,16 +445,6 @@ def main(argv=None):
     )
     ### Aggregate + export ###
     print("Aggregating and exporting...")
-    # pred_df_combined, id_df_combined, coef_df_combined = aggregate_across_params(
-    #     param_dict=args.param_dict,
-    #     base_import_dir=args.scratch_dir / args.perm_dir.name,
-    #     n_repeats=args.config_dict["n_repeats"],
-    #     impact_type=args.impact_type,
-    # )
-
-    # export_path_preds = args.perm_dir / args.impact_type / "pred_df.parquet"
-    # export_path_ids = args.perm_dir / args.impact_type / "id_df.parquet"
-    # export_path_coefs = args.perm_dir / args.impact_type / "coef_df.parquet"
     aggregate_and_export(
         param_dict=args.param_dict,
         base_import_dir=args.scratch_dir / args.perm_dir.name,
@@ -447,9 +454,6 @@ def main(argv=None):
         export_path_ids=args.perm_dir / args.impact_type / "id_df.parquet",
         export_path_coefs=args.perm_dir / args.impact_type / "coef_df.parquet",
     )
-    # export_df(export_path_preds, pred_df_combined)
-    # export_df(export_path_ids, id_df_combined)
-    # export_df(export_path_coefs, coef_df_combined)
     print("DONE!")
 
 

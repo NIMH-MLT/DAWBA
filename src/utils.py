@@ -57,9 +57,9 @@ def get_prob_col_outcomes(agg_type, desc_seg_type, impact_type):
     return prob_col, prob_outcomes
 
 
-def expand_text(df, agg_type, desc_seg_type, impact_type):
+def expand_text(df, agg_type, desc_seg_type):
     prob_col, prob_outcomes = get_prob_col_outcomes(
-        agg_type=agg_type, desc_seg_type=desc_seg_type, impact_type=impact_type
+        agg_type=agg_type, desc_seg_type=desc_seg_type
     )
     if desc_seg_type in ["shot_zero", "shot_few"]:
         return df, prob_outcomes

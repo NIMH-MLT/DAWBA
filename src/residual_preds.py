@@ -137,7 +137,7 @@ def loop_through_resid_params(
         combined_perm_ids = pd.concat(perm_id_list, axis=1)
         combined_output_df = pd.concat(output_df_list, axis=0)
         combined_coef_df = pd.concat(coef_df_list, axis=0, ignore_index=True)
-        assert combined_perm_ids.shape[1] == 3
+        assert combined_perm_ids.shape[1] == n_splits
         assert combined_output_df["DAWBA_ID"].nunique() == len(combined_output_df)
         return combined_perm_ids, combined_output_df, combined_coef_df
 
@@ -243,109 +243,3 @@ def loop_through_resid_params(
                     save_dir=export_dir,
                 )
     return None
-
-
-# TODO: fix raw call to residual_preds.py through CL
-# right now, this only really works for call to residual_wrapper.py,
-# which calls loop_through_residual_params()
-# def build_parser():
-#     parser = argparse.ArgumentParser(
-#         prog="residual_preds",
-#         description="For each alpha, get ridge regression results for each fold",
-#     )
-#     parser.add_argument(
-#         "--impact_type",
-#         required=True,
-#         help="One of ['self', 'parent']",
-#         choices=["self", "parent"],
-#     )
-#     parser.add_argument(
-#         "--agg_type",
-#         required=True,
-#         choices=["block", "avg", "max", "binary", "proba-limited"],
-#     )
-#     parser.add_argument(
-#         "--desc_seg_type",
-#         required=True,
-#         choices=["pt_noshort", "turns", "expanded", "original", "combined"],
-#     )
-#     parser.add_argument("--df_path", required=True, type=Path)
-#     parser.add_argument("--base_save_dir", required=True, type=Path)
-#     parser.add_argument(
-#         "--n_splits",
-#         required=False,
-#         type=int,
-#         help="Optional integer determining how many folds to use for CV, defaults to 3",
-#         default=3,
-#     )
-#     parser.add_argument(
-#         "--num_layers", required=False, type=int, default=3, choices=[1, 2, 3]
-#     )
-#     parser.add_argument("--perm_dir", required=True, type=Path)
-#     parser.add_argument("--linear_type", required=True, choices=["elastic", "ridge"])
-#     parser.add_argument("--shuffle", required=True, choices=["text", "none"])
-#     parser.add_argument("--alpha_list", required=False, nargs="+", default=ALPHA_LIST)
-#     parser.add_argument(
-#         "--max_iter",
-#         required=False,
-#         type=int,
-#         help=f"Optional integer determining maximum iterations for Logistic Regression, defaults to 5000",
-#         default=5000,
-#     )
-#     parser.add_argument(
-#         "--seed",
-#         required=False,
-#         type=int,
-#         help=f"Optional integer determining random state, defaults to {SEED}",
-#         default=SEED,
-#     )
-#     parser.add_argument(
-#         "--n_repeats",
-#         required=False,
-#         type=int,
-#         help="Optional integer determining number of times to repeat CV, defaults to 5. Must be >0",
-#         default=5,
-#     )
-#     parser.add_argument(
-#         "--split_tol",
-#         required=False,
-#         type=float,
-#         help="Optional float determining how close eligible_group ratios must be between splits, defaults to 0.1",
-#         default=0.1,
-#     )
-#     return parser
-
-
-# def main(argv=None):
-#     ## Parse args
-#     args = build_parser().parse_args(argv)
-#     alpha_list = (
-#         None if args.alpha_list == ["None"] else [float(a) for a in args.alpha_list]
-#     )
-#     ## Perm shuffle str
-#     if args.shuffle == "none":
-#         shuffle = None
-#     else:
-#         shuffle = args.shuffle
-#     loop_through_resid_params(
-#         impact_type=args.impact_type,
-#         agg_type=args.agg_type,
-#         desc_seg_type=args.desc_seg_type,
-#         df_path=args.df_path,
-#         base_save_dir=args.base_save_dir,
-#         n_splits=args.n_splits,
-#         num_layers=args.num_layers,
-#         perm_dir=args.perm_dir,
-#         linear_type=args.linear_type,
-#         shuffle=shuffle,
-#         alpha_list=alpha_list,
-#         max_iter=args.max_iter,
-#         seed=args.seed,
-#         n_repeats=args.n_repeats,
-#         split_tol=args.split_tol,
-#         verbose=0,
-#     )
-
-
-# if __name__ == "__main__":
-#     main()

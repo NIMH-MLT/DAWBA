@@ -1,26 +1,157 @@
-import pandas as pd
-from src.utils import col_config_sensitivity, get_prob_col_outcomes, get_perm_seed
+from src.utils import (
+    get_prob_col_outcomes,
+    get_perm_seed,
+    expand_text,
+)
 from src.residual_preds import add_split_col
 from src.residual_func import prep_train_test
 from src.Regressor import ResidualRegressor
-import pandas as pd
-from src.utils import get_df_path
-import numpy as np
-from sklearn.metrics import r2_score
+
 from joblib import Parallel, delayed
-from functools import reduce
 import argparse
+from functools import reduce
 import json
 from pathlib import Path
+
+import pandas as pd
+import numpy as np
+from sklearn.metrics import r2_score
+
+
+def single_train_test_lmg(config, n_repeats, df, starting_seed, scale=False):
+    #### PREP DATA  ####
+    # Get X/y train/test sets
+    target_col = f"impact_score_{config['impact_type']}"
+    df_expand, prob_outcomes = expand_text(
+        df=df,
+        agg_type=config["agg_type"],
+        desc_seg_type=config["desc_seg_type"],
+    )
+    # X
+    X_train = df_expand.drop(target_col, axis=1)
+    if scale:
+        from sklearn.preprocessing import MinMaxScaler
+
+        scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
+        X_train[prob_outcomes] = scaler.fit_transform(X_train[prob_outcomes])
+    X_test = X_train
+    # y
+    y_train = df_expand[target_col].to_numpy()
+    y_test = y_train
+
+    #### RUN PERMS ####
+    df_list = []
+    for repeat in range(n_repeats):
+        rand_state = starting_seed + repeat
+        # Run feat imp
+        lmg_df = get_perm_feat_imp(
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            model_config_dict=config,
+            random_state=rand_state,
+        )
+        lmg_df = lmg_df.rename(
+            columns={
+                "original": f"original_{repeat}",
+                "reversed": f"reversed_{repeat}",
+            }
+        )
+        df_list.append(lmg_df)
+    combined_df = reduce(lambda left, right: left.join(right, how="outer"), df_list)
+    final_df = pd.DataFrame(
+        {
+            # avg for each outcome across all perms
+            "avg_increase": combined_df.mean(axis=1).round(4),
+            # stdev for each outcome across all perms
+            "std_increase": combined_df.std(axis=1).round(4),
+        }
+    )
+    return final_df
+
+
+def agg_over_perms(all_dfs):
+    """
+    Collapse per-ordering LMG results into a single allocation of explained
+    variance across text outcomes.
+
+    Params
+    ------
+    all_dfs: list[pandas DF]
+        One frame per ordering, indexed by outcome. Each must contain ONLY
+        columns whose names carry "mean" or "std", and those names must be unique
+        across frames. Passing raw wrapper output trips the
+        assertion; passing unsuffixed frames raises on overlapping column names in the join.
+
+    Returns
+    -------
+    pandas DF indexed by outcome, with columns:
+        avg_mean: mean incremental r^2 allocated to that outcome, averaged over
+            every ordering and its reverse. Sums across outcomes to the text
+            stage's increment over the SQ baseline, so entries are readable as
+            shares of that increment. May be negative -- an outcome can lower
+            out-of-sample r^2.
+        std_mean: spread of those same per-ordering estimates. Monte Carlo error,
+            i.e. whether enough orderings were sampled for the allocation to have
+            settled; NaN when only one ordering is supplied. The per-ordering
+            *_std columns (fold-level noise WITHIN an ordering) are a different
+            quantity and are dropped.
+    """
+    if len(all_dfs) == 0:
+        raise ValueError("Input list is empty")
+    ref = all_dfs[0].index
+    for i, df in enumerate(all_dfs[1:], start=1):
+        if not df.index.equals(ref):
+            missing = sorted(set(ref) - set(df.index))
+            extra = sorted(set(df.index) - set(ref))
+            raise ValueError(f"""frame {i} has a different outcome index than frame 0 \n
+                (missing: {missing}, extra: {extra}). Every ordering must \n
+                decompose the same registry, or the shares will not sum to \n
+                the increment.""")
+
+    combined_df = reduce(lambda left, right: left.join(right, how="outer"), all_dfs)
+    unexpected = [
+        c for c in combined_df.columns if not c.split("_")[1] in ("mean", "std")
+    ]
+    assert (
+        not unexpected
+    ), f"unexpected columns (subset to aggregates first): {unexpected}"
+    mean_cols = [col for col in combined_df.columns if "mean" in col]
+    std_cols = [col for col in combined_df.columns if "std" in col]
+    assert len(mean_cols) + len(std_cols) == combined_df.shape[1]
+    final_df = pd.DataFrame(
+        {
+            # global mean
+            "avg_mean": combined_df[mean_cols].mean(axis=1).round(4),
+            # stdev of mean(avg across folds/repeats for a given permutation)
+            "std_mean": combined_df[mean_cols].std(axis=1).round(4),
+        }
+    )
+    return final_df
 
 
 def get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test):
     """
     Helper for get_perm_feat_imp(); trains a dummy model to extract r^2 from SQ-level predictions
     """
+    # Ensure no two_layer_base bc hardcode as None
+    if (
+        "two_layer_base" in model_config_dict.keys()
+        or "outcome_sub_list" in model_config_dict.keys()
+    ):
+        raise ValueError(
+            "two_layer_base and outcome_sub_list must not be in model_config_dict"
+        )
+
+    prob_col, prob_outcomes = get_prob_col_outcomes(
+        agg_type=model_config_dict["agg_type"],
+        desc_seg_type=model_config_dict["desc_seg_type"],
+    )
     model = ResidualRegressor(
         **model_config_dict,
-        outcome_sub_list=None,
+        # only use one text outcome for speed bc only need SQ
+        outcome_sub_list=[prob_outcomes[0]],
         two_layer_base=None,
     )
     model.fit(X_train, y_train)
@@ -75,7 +206,6 @@ def lmg_imp_wrapper(
             random_state=perm_seed,
             repeat=repeat,
             split_id=split_id,
-            impact_type=impact_type,
         )
         for X_train, X_test, y_train, y_test, repeat, split_id in jobs
     )
@@ -101,7 +231,6 @@ def get_perm_feat_imp(
     y_test,
     model_config_dict,
     random_state,
-    impact_type,
     repeat=None,
     split_id=None,
 ):
@@ -111,10 +240,17 @@ def get_perm_feat_imp(
     features + records added r^2 to previous iteration w/o the outcome. Outputs pandas DF containing
     avg incremental r^2 of each outcome over the n_samples permutations.
     """
+    # Base and sublist are hard-coded, cant pass
+    if (
+        "two_layer_base" in model_config_dict.keys()
+        or "outcome_sub_list" in model_config_dict.keys()
+    ):
+        raise ValueError(
+            "two_layer_base and outcome_sub_list must not be in model_config_dict"
+        )
     _, outcome_list = get_prob_col_outcomes(
         agg_type=model_config_dict["agg_type"],
         desc_seg_type=model_config_dict["desc_seg_type"],
-        impact_type=impact_type,
     )
 
     rng = np.random.default_rng(random_state)
@@ -134,8 +270,9 @@ def get_perm_feat_imp(
     def run_perm(perm):
         contributions = {outcome: 0.0 for outcome in outcome_list}
         active = []
-        r2_prev = get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test)
-        tot_r2 = r2_prev
+        r2_start = get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test)
+        r2_prev = r2_start
+        tot_r2 = r2_start
 
         for outcome in perm:
             active.append(outcome)
@@ -154,7 +291,9 @@ def get_perm_feat_imp(
             contributions[outcome] += delta
             tot_r2 += delta
             r2_prev = r2_new
-        # Sum of all incrimental r2 should = r2 of full model (last run of outer-loop ^)
+        # Sum of all incremental r2 should (excluding baseline) should equal the difference between the new r2 and the starting r2
+        assert np.isclose(sum(contributions.values()), r2_new - r2_start)
+        # Sum of all incremental r2 (including baseline) should = r2 of full model (last run of outer-loop ^)
         assert np.isclose(tot_r2, r2_new, atol=1e-8), f"TOT: {tot_r2}; NEW: {r2_new}"
         return contributions
 
