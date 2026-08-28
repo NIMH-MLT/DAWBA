@@ -4,22 +4,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import mean_absolute_error, r2_score
 from baycomp import two_on_single
+from src.utils import export_data
 
 _METRIC_FNS = {
     "mae": mean_absolute_error,
     "r2": r2_score,
 }
-
-
-def export_data(data_to_export, export_path, remove_existing=False):
-    if remove_existing and export_path.exists():
-        print(f"REMOVING file at path: {export_path}")
-        export_path.unlink()
-    export_path.parent.mkdir(exist_ok=True, parents=True)
-    if export_path.suffix == ".parquet":
-        data_to_export.to_parquet(export_path)
-    else:
-        raise ValueError(f"Unrecognized export type: {export_path.suffix}")
 
 
 def get_layer1(r2_df):

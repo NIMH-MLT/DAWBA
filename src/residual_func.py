@@ -50,7 +50,6 @@ def prep_train_test(base_df, split_id, impact_type, agg_type, desc_seg_type):
             df=base_df,
             agg_type=agg_type,
             desc_seg_type=desc_seg_type,
-            impact_type=impact_type,
         )
 
     # Get X_train, y_train, X_test, y_test
@@ -180,7 +179,6 @@ def build_model(
         df=train_df,
         agg_type=config_dict["agg_type"],
         desc_seg_type=config_dict["desc_seg_type"],
-        impact_type=config_dict["impact_type"],
     )
     target_col = f"impact_score_{config_dict['impact_type']}"
     X_train = df_expand.drop(target_col, axis=1)
@@ -231,7 +229,6 @@ def get_saliency_map(config_dict, model, df, coef_df):
         df=df,
         agg_type=config_dict["agg_type"],
         desc_seg_type=config_dict["desc_seg_type"],
-        impact_type=impact_type,
     )
     # Add sum score col
     quest_cols = model.quest_cols

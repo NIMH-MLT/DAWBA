@@ -31,7 +31,7 @@ def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
     )
 
 
-def get_prob_col_outcomes(agg_type, desc_seg_type, impact_type):
+def get_prob_col_outcomes(agg_type, desc_seg_type):
     if desc_seg_type in ["shot_zero", "shot_few"]:
         return "", ADVANCED_EXTRACTION_OUTCOMES
     elif agg_type in ["avg", "max", "block"]:
@@ -80,6 +80,29 @@ def get_perm_seed(perm_dir):
     with open(perm_seed_path, "r") as f:
         perm_seed = int(f.read().strip())
     return perm_seed
+
+
+def export_data(data_to_export, export_path, remove_existing=False):
+    if export_path.exists():
+
+        if remove_existing:
+            print(f"REMOVING file at path: {export_path}")
+            export_path.unlink()
+        else:
+            print(f"File already exists at path: {export_path}")
+            print(f"ABORTING")
+            raise ValueError(
+                "`remove_existing` set to False and file already exists at path"
+            )
+    export_path.parent.mkdir(exist_ok=True, parents=True)
+    if export_path.suffix == ".parquet":
+        data_to_export.to_parquet(export_path)
+    elif export_path.suffix == ".csv":
+        data_to_export.to_csv(export_path)
+    elif export_path.suffix == ".tsv":
+        data_to_export.to_csv(export_path, sep="\t")
+    else:
+        raise ValueError(f"Unrecognized export type: {export_path.suffix}")
 
 
 ## Column tyoes
