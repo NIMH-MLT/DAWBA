@@ -9,9 +9,8 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import LinearRegression, Ridge
 
-# TODO: sklearn compatability + __init__ args for all regressors
 
-
+# TODO: Write test for export/import of model
 class BaseRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
@@ -38,7 +37,6 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         self.linear_type = linear_type
         self.alpha3 = alpha3
         self.outcome_sub_list = outcome_sub_list
-        self.perm_ids = None
 
     def _build_X_blocks(self, X):
         if not isinstance(X, pd.DataFrame):
@@ -149,8 +147,34 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
 
 
 class IndependentRegressor(BaseRegressor):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    # Explicit kwargs for sklearn compatibility
+    def __init__(
+        self,
+        num_layers,
+        impact_type,
+        desc_seg_type,
+        quest_cols,
+        agg_type,
+        alpha2,
+        alpha3,
+        seed,
+        linear_type,
+        outcome_sub_list=None,
+        max_iter=5000,
+    ):
+        super().__init__(
+            num_layers=num_layers,
+            impact_type=impact_type,
+            desc_seg_type=desc_seg_type,
+            quest_cols=quest_cols,
+            agg_type=agg_type,
+            alpha2=alpha2,
+            alpha3=alpha3,
+            seed=seed,
+            linear_type=linear_type,
+            outcome_sub_list=outcome_sub_list,
+            max_iter=max_iter,
+        )
 
     def _reported_stages(self):
         """Each stage is a standalone model on raw y, and fit() builds all three
@@ -225,6 +249,7 @@ class IndependentRegressor(BaseRegressor):
 
         return pd.DataFrame(
             {
+                "DAWBA_ID": X["DAWBA_ID"].values,
                 "pred_stage1": pred1,
                 "pred_stage2_total": pred2,
                 "pred_stage3_total": pred3,
@@ -233,18 +258,49 @@ class IndependentRegressor(BaseRegressor):
 
 
 class ResidualRegressor(BaseRegressor):
-    def __init__(self, two_layer_base, **kwargs):
-        super().__init__(**kwargs)
-        if self.num_layers not in [2, 3]:
-            raise ValueError(
-                f"Num layers must be one of [2,3] for ResidualRegressor. Got {self.num_layers}"
-            )
+    # explicit kwargs for sklearn compatibility
+    def __init__(
+        self,
+        num_layers,
+        impact_type,
+        desc_seg_type,
+        quest_cols,
+        agg_type,
+        alpha2,
+        alpha3,
+        seed,
+        linear_type,
+        two_layer_base=None,
+        outcome_sub_list=None,
+        max_iter=5000,
+    ):
+        super().__init__(
+            num_layers=num_layers,
+            impact_type=impact_type,
+            desc_seg_type=desc_seg_type,
+            quest_cols=quest_cols,
+            agg_type=agg_type,
+            alpha2=alpha2,
+            alpha3=alpha3,
+            seed=seed,
+            linear_type=linear_type,
+            outcome_sub_list=outcome_sub_list,
+            max_iter=max_iter,
+        )
         self.two_layer_base = two_layer_base
-        if (self.two_layer_base is not None and self.num_layers != 2) or (
-            self.num_layers == 2 and self.two_layer_base is None
-        ):
+
+    def _validate_params(self):
+        if self.num_layers not in (2, 3):
+            raise ValueError(f"num_layers must be one of [2, 3]. Got {self.num_layers}")
+
+        if (self.two_layer_base is None) != (self.num_layers == 3):
             raise ValueError(
-                f"two_layer_base must be not None exactly when num_layers=2. Got: two_layer_base:{self.two_layer_base}; num_layers:{self.num_layers}"
+                f"two_layer_base must be non-None exactly when num_layers=2. "
+                f"Got two_layer_base={self.two_layer_base}, num_layers={self.num_layers}"
+            )
+        if self.num_layers == 2 and self.two_layer_base not in ("S", "Q"):
+            raise ValueError(
+                f"two_layer_base must be 'S' or 'Q'. Got {self.two_layer_base}"
             )
 
     def _reported_stages(self):
@@ -279,6 +335,8 @@ class ResidualRegressor(BaseRegressor):
         Use residual method
         Layer1--> Use sum scores to predict raw impact
         """
+        # Validate params
+        self._validate_params()
         y = np.asarray(y, dtype=float)
         X1, X2, X3 = self._build_X_blocks(X)
 
@@ -390,6 +448,7 @@ class ResidualRegressor(BaseRegressor):
 
         return pd.DataFrame(
             {
+                "DAWBA_ID": X["DAWBA_ID"].values,
                 "pred_stage1": pred1,
                 "pred_stage2_increment": pred2,
                 "pred_stage2_total": pred2_total,

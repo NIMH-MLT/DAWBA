@@ -11,7 +11,6 @@ import src.residual_func as res_mod
 from src.residual_func import (
     build_model,
     get_lr_output,
-    get_output_df,
     get_saliency_map,
     prep_train_test,
 )
@@ -22,17 +21,19 @@ QUEST = {
     "parent": ["p_dep_q1", "p_dep_q2", "p_dep_q3"],
 }
 
+# TODO: Test shuffling
+
 
 ######## Fixtures ########
 @pytest.fixture(autouse=True)
 def stub_registry(monkeypatch):
-    """get_prob_col_outcomes is imported into both modules; pin both bindings."""
+    """get_prob_col_outcomes is only imported into both Regressor. col_config_sensitivity is only imported into residual_func."""
 
-    def fake(agg_type, desc_seg_type):
-        return ("prob_col", list(PROB_OUTCOMES))
-
-    monkeypatch.setattr(res_mod, "get_prob_col_outcomes", fake)
-    monkeypatch.setattr(reg_mod, "get_prob_col_outcomes", fake)
+    monkeypatch.setattr(
+        reg_mod,
+        "get_prob_col_outcomes",
+        lambda agg_type, desc_seg_type: ("prob_col", list(PROB_OUTCOMES)),
+    )
     monkeypatch.setattr(
         res_mod,
         "col_config_sensitivity",
@@ -47,7 +48,7 @@ def stub_expand(monkeypatch):
     monkeypatch.setattr(
         res_mod,
         "expand_text",
-        lambda df, agg_type, desc_seg_type, impact_type: (
+        lambda df, agg_type, desc_seg_type: (
             df.copy(),
             list(PROB_OUTCOMES),
         ),
@@ -118,77 +119,6 @@ def on_disk(make_df, tmp_path, monkeypatch):
     return _write
 
 
-######## get_output_df ########
-class TestGetOutputDf:
-    def test_one_layer_columns(self):
-        """num_layers=1 routes to IndependentRegressor, whose predict_all has no
-        increment columns."""
-        pred = pd.DataFrame(
-            {
-                "pred_stage1": [1.0, 2.0],
-                "pred_stage2_total": [3.0, 4.0],
-                "pred_stage3_total": [5.0, 6.0],
-            }
-        )
-        out = get_output_df(
-            1, pd.DataFrame({"DAWBA_ID": [10, 20]}), pd.Series([1.0, 2.0]), pred
-        )
-        assert list(out.columns) == [
-            "DAWBA_ID",
-            "true",
-            "pred_stage1",
-            "pred_stage2_total",
-            "pred_stage3_total",
-        ]
-
-    @pytest.mark.parametrize("num_layers", [2, 3])
-    def test_multi_layer_columns(self, num_layers):
-        pred = pd.DataFrame(
-            {
-                "pred_stage1": [1.0, 2.0],
-                "pred_stage2_increment": [0.5, 0.5],
-                "pred_stage2_total": [1.5, 2.5],
-                "pred_stage3_increment": [0.25, 0.25],
-                "pred_stage3_total": [1.75, 2.75],
-            }
-        )
-        out = get_output_df(
-            num_layers,
-            pd.DataFrame({"DAWBA_ID": [10, 20]}),
-            pd.Series([1.0, 2.0]),
-            pred,
-        )
-        assert list(out.columns) == [
-            "DAWBA_ID",
-            "true",
-            "pred_stage1",
-            "pred_stage2_increment",
-            "pred_stage2_total",
-            "pred_stage3_increment",
-            "pred_stage3_total",
-        ]
-
-    def test_ids_truths_and_preds_stay_row_aligned(self):
-        """Everything is copied via .values, so alignment is positional -- a slip
-        here silently corrupts every downstream R²."""
-        pred = pd.DataFrame(
-            {
-                "pred_stage1": [1.0, 2.0, 3.0],
-                "pred_stage2_increment": [0.0, 0.0, 0.0],
-                "pred_stage2_total": [1.0, 2.0, 3.0],
-                "pred_stage3_increment": [0.0, 0.0, 0.0],
-                "pred_stage3_total": [1.0, 2.0, 3.0],
-            }
-        )
-        test_set = pd.DataFrame({"DAWBA_ID": [11, 22, 33]}, index=[7, 8, 9])
-        y = pd.Series([9.0, 8.0, 7.0], index=[100, 200, 300])
-        out = get_output_df(3, test_set, y, pred)
-
-        assert out["DAWBA_ID"].tolist() == [11, 22, 33]
-        assert out["true"].tolist() == [9.0, 8.0, 7.0]
-        assert out["pred_stage3_total"].tolist() == [1.0, 2.0, 3.0]
-
-
 ######## prep_train_test ########
 class TestPrepTrainTest:
     def test_split_is_a_partition(self, make_df):
@@ -207,8 +137,7 @@ class TestPrepTrainTest:
             assert "DAWBA_ID" in X.columns
 
     def test_X_and_y_share_row_order(self, make_df):
-        """X.iloc[i] and y.iloc[i] must be the same participant -- get_output_df
-        depends on this."""
+        """X.iloc[i] and y.iloc[i] must be the same participant"""
         df = make_df()
         X_tr, X_te, y_tr, y_te = prep_train_test(df, 2, "self", "scale-new", "original")
         truth = df.set_index("DAWBA_ID")["impact_score_self"]
@@ -225,6 +154,20 @@ class TestPrepTrainTest:
         )
         with pytest.raises(AssertionError):
             prep_train_test(empty, 0, "self", "scale-new", "original")
+
+
+class TestBuildModel:
+    def test_coef_index_strips_cohort_prefix(self, model_config, on_disk):
+        """build_model strips s_dep/p_dep so self and parent coefs can be joined;
+        get_saliency_map reattaches it from the leading underscore."""
+        on_disk()
+        cfg = model_config("self")
+        model, coef_df, _ = build_model(
+            cfg, data_dir="ignored", temp=0.0, llm_model="ignored"
+        )
+        assert coef_df.index.name == "stage_feat"
+        assert "stage2__q1" in coef_df.index
+        assert not any("s_dep" in i for i in coef_df.index)
 
 
 ######## get_lr_output ########
@@ -249,19 +192,58 @@ class TestGetLrOutput:
 
         return _call
 
+    @pytest.mark.parametrize(
+        "num_layers,two_layer_base,expected",
+        [
+            (
+                1,
+                None,
+                [
+                    "DAWBA_ID",
+                    "pred_stage1",
+                    "pred_stage2_total",
+                    "pred_stage3_total",
+                    "true",
+                    "split_id",
+                ],
+            ),
+            (
+                3,
+                None,
+                [
+                    "DAWBA_ID",
+                    "pred_stage1",
+                    "pred_stage2_increment",
+                    "pred_stage2_total",
+                    "pred_stage3_increment",
+                    "pred_stage3_total",
+                    "true",
+                    "split_id",
+                ],
+            ),
+        ],
+    )
+    def test_output_columns(self, call, num_layers, two_layer_base, expected):
+        _, output_df, _ = call(num_layers=num_layers, two_layer_base=two_layer_base)
+        assert list(output_df.columns) == expected
+
+    @pytest.mark.parametrize("split_id", [0, 1, 2])
+    def test_true_and_ids_stay_row_aligned(self, call, make_df, split_id):
+        """`true` is assigned positionally onto predict_all's frame, so any index
+        drift silently corrupts every downstream R²."""
+        df = make_df(n=24, n_splits=3)
+        _, output_df, _ = call(df=df, split_id=split_id)
+        truth = df.set_index("DAWBA_ID")["impact_score_self"]
+        np.testing.assert_allclose(
+            output_df["true"].to_numpy(),
+            truth.loc[output_df["DAWBA_ID"]].to_numpy(),
+        )
+
     def test_output_rows_are_the_test_fold(self, call, make_df):
         df = make_df(n=24, n_splits=3)
         _, output_df, _ = call(df=df, split_id=1)
         assert set(output_df["DAWBA_ID"]) == set(
             df.loc[df["split_id"] == 1, "DAWBA_ID"]
-        )
-
-    def test_true_column_matches_held_out_target(self, call, make_df):
-        df = make_df(n=24, n_splits=3)
-        _, output_df, _ = call(df=df, split_id=2)
-        truth = df.set_index("DAWBA_ID")["impact_score_self"]
-        np.testing.assert_allclose(
-            output_df["true"].to_numpy(), truth.loc[output_df["DAWBA_ID"]].to_numpy()
         )
 
     def test_split_id_tagged_on_outputs(self, call):

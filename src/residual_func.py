@@ -1,5 +1,5 @@
 ## residual_func.py
-from src.utils import col_config_sensitivity, get_prob_col_outcomes
+from src.utils import col_config_sensitivity
 from src.Regressor import IndependentRegressor, ResidualRegressor
 from src.utils import get_df_path, expand_text
 from src.coef_visual import plot_heatmap
@@ -7,46 +7,16 @@ from src.coef_visual import plot_heatmap
 import pandas as pd
 
 
-def get_output_df(num_layers, test_set, y_test, pred_df):
-    """
-    Aggregates ground truth and model predictions
-    """
-    if num_layers == 1:
-        output_df = pd.DataFrame(
-            {
-                "DAWBA_ID": test_set["DAWBA_ID"].values,
-                "true": y_test.values,
-                "pred_stage1": pred_df["pred_stage1"].values,
-                "pred_stage2_total": pred_df["pred_stage2_total"].values,
-                "pred_stage3_total": pred_df["pred_stage3_total"].values,
-            }
-        )
-    else:
-        output_df = pd.DataFrame(
-            {
-                "DAWBA_ID": test_set["DAWBA_ID"].values,
-                "true": y_test.values,
-                "pred_stage1": pred_df["pred_stage1"].values,
-                "pred_stage2_increment": pred_df["pred_stage2_increment"].values,
-                "pred_stage2_total": pred_df["pred_stage2_total"].values,
-                "pred_stage3_increment": pred_df["pred_stage3_increment"].values,
-                "pred_stage3_total": pred_df["pred_stage3_total"].values,
-            }
-        )
-    return output_df
-
-
 def prep_train_test(base_df, split_id, impact_type, agg_type, desc_seg_type):
     """
     Helper for get_lr_output(); Splits data into train/test based on split_id
     and extracts X and y for each
     """
-    if desc_seg_type in ["zero_shot", "few_shot"]:
+    if desc_seg_type in ["shot_zero", "shot_few"]:
         df_expand = base_df
-        _, prob_cols = get_prob_col_outcomes(agg_type, desc_seg_type)
     else:
         # Expand text prob vectors to make probs granular cols
-        df_expand, prob_cols = expand_text(
+        df_expand, _ = expand_text(
             df=base_df,
             agg_type=agg_type,
             desc_seg_type=desc_seg_type,
@@ -106,9 +76,6 @@ def get_lr_output(
         agg_type=agg_type,
         desc_seg_type=desc_seg_type,
     )
-    prob_col, prob_outcomes = get_prob_col_outcomes(
-        agg_type=agg_type, desc_seg_type=desc_seg_type
-    )
     outcome_sub_list = None
     # ================> Set up model
     model_args = dict(
@@ -147,22 +114,54 @@ def get_lr_output(
     )
 
     # Predictions
-    output_df = get_output_df(num_layers, X_test, y_test, pred_df)
-    output_df["split_id"] = split_id
+    pred_df["true"] = y_test.values
+    pred_df["split_id"] = split_id
 
-    return perm_id_df, output_df, coef_df
+    return perm_id_df, pred_df, coef_df
 
 
 ############################################################
 ############################################################
 ############################################################
+def get_X_y(df, config_dict, scale=False):
+    """
+    Extracts X and y from a given df based on config_dict. Optionally scales the text_derived numerical columns to [0, 1] range.
+
+    Params
+    ------
+    data_dir : pandas DF
+        - contains train/test data for a given LLM model, temp, and config_dict
+    llm_model : str
+        Name of LLM model used to generate text embeddings. One of [gemini-2.5-pro, Llama-3.3-70B-Instruct, Qwen3.6-27B]
+    config_dict : dict
+        Dictionary containing model configuration. Must contain keys:
+            - agg_type : str
+            - desc_seg_type : str
+            - impact_type : str
+    scale : bool
+        Whether to scale the text_derived numerical (prob_cols) columns to [0, 1] range using MinMaxScaler
+    """
+    df_expand, prob_cols = expand_text(
+        df=df,
+        agg_type=config_dict["agg_type"],
+        desc_seg_type=config_dict["desc_seg_type"],
+    )
+    target_col = f"impact_score_{config_dict['impact_type']}"
+    X = df_expand.drop(target_col, axis=1)
+    y = df_expand[target_col]
+    if scale:
+        from sklearn.preprocessing import MinMaxScaler
+
+        scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
+        X[prob_cols] = scaler.fit_transform(X[prob_cols])
+    return X, y
 
 
 def build_model(
     config_dict, data_dir, temp, llm_model, two_layer_base=None, scale=False
 ):
     """
-    - Fit a ResidualRegressor given some model configuration
+    - Fit a ResidualRegressor given some model configuration on **training data**
     - Returns trained model, learned feature coefs, and loaded train DF
     """
     ## Get train data
@@ -175,19 +174,8 @@ def build_model(
         temp=temp,
     )
     train_df = pd.read_parquet(data_path)
-    df_expand, prob_cols = expand_text(
-        df=train_df,
-        agg_type=config_dict["agg_type"],
-        desc_seg_type=config_dict["desc_seg_type"],
-    )
-    target_col = f"impact_score_{config_dict['impact_type']}"
-    X_train = df_expand.drop(target_col, axis=1)
-    y_train = df_expand[target_col]
-    if scale:
-        from sklearn.preprocessing import MinMaxScaler
-
-        scaler = MinMaxScaler(clip=True, feature_range=(0, 1))
-        X_train[prob_cols] = scaler.fit_transform(X_train[prob_cols])
+    # Split X/y
+    X_train, y_train = get_X_y(df=train_df, config_dict=config_dict, scale=scale)
 
     # Build + fit model
     model = ResidualRegressor(**config_dict, two_layer_base=two_layer_base)
@@ -225,7 +213,7 @@ def get_saliency_map(config_dict, model, df, coef_df):
     impact_type = config_dict["impact_type"]
     quest_pref = "p_dep" if impact_type == "parent" else "s_dep"
     # Expand text prob vector into cols
-    df_sub, prob_cols = expand_text(
+    df_sub, _ = expand_text(
         df=df,
         agg_type=config_dict["agg_type"],
         desc_seg_type=config_dict["desc_seg_type"],

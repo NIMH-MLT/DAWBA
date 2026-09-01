@@ -113,31 +113,39 @@ def stub_linear():
     return _make
 
 
-######## Construction invariants ########
-class TestResidualRegressorConstruction:
-    def test_num_layers_one_rejected(self, make_resid):
-        with pytest.raises(ValueError, match="Num layers"):
-            make_resid(num_layers=1)
+class TestResidualRegressorParamValidation:
+    def test_num_layers_one_rejected(self, make_resid, make_xy):
+        m = make_resid(num_layers=1)
+        df, y = make_xy()
+        with pytest.raises(ValueError, match="num_layers must be one of"):
+            m.fit(df, y)
 
-    def test_two_layers_requires_base(self, make_resid):
+    def test_two_layers_requires_base(self, make_resid, make_xy):
+        m = make_resid(num_layers=2, two_layer_base=None)
+        df, y = make_xy()
         with pytest.raises(ValueError, match="two_layer_base"):
-            make_resid(num_layers=2, two_layer_base=None)
+            m.fit(df, y)
 
     @pytest.mark.parametrize("base", ["S", "Q"])
-    def test_two_layers_with_base_ok(self, make_resid, base):
-        m = make_resid(num_layers=2, two_layer_base=base)
-        assert m.num_layers == 2
-        assert m.two_layer_base == base
-
-    def test_three_layers_no_base_ok(self, make_resid):
-        m = make_resid(num_layers=3, two_layer_base=None)
-        assert m.num_layers == 3
-        assert m.two_layer_base is None
-
-    @pytest.mark.parametrize("base", ["S", "Q"])
-    def test_three_layers_with_base_rejected(self, make_resid, base):
+    def test_three_layers_with_base_rejected(self, make_resid, make_xy, base):
+        m = make_resid(num_layers=3, two_layer_base=base)
+        df, y = make_xy()
         with pytest.raises(ValueError, match="two_layer_base"):
-            make_resid(num_layers=3, two_layer_base=base)
+            m.fit(df, y)
+
+    @pytest.mark.parametrize("bad", ["sum", "s", "", 0])
+    def test_two_layers_bad_base_rejected(self, make_resid, make_xy, bad):
+        m = make_resid(num_layers=2, two_layer_base=bad)
+        df, y = make_xy()
+        with pytest.raises(ValueError, match="two_layer_base must be 'S' or 'Q'"):
+            m.fit(df, y)
+
+    def test_bad_params_construct_without_raising(self, make_resid):
+        """__init__ only assigns params, so a nonsensical combination is
+        constructible (and clonable) -- it should still fail at fit."""
+        m = make_resid(num_layers=1, two_layer_base="Z")
+        assert m.num_layers == 1 and m.two_layer_base == "Z"
+        clone(m)
 
 
 ######## _make_model ########
@@ -352,6 +360,7 @@ class TestResidualPredictIdentities:
         df, y = make_xy()
         m.fit(df, y)
         assert list(m.predict_all(df).columns) == [
+            "DAWBA_ID",
             "pred_stage1",
             "pred_stage2_increment",
             "pred_stage2_total",
@@ -517,6 +526,7 @@ class TestIndependentRegressor:
         m.fit(df, y)
         p = m.predict_all(df)
         assert list(p.columns) == [
+            "DAWBA_ID",
             "pred_stage1",
             "pred_stage2_total",
             "pred_stage3_total",

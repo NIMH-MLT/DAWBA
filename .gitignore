@@ -16,3 +16,5 @@ src/old
 data_old/
 logs/
 results_old/
+models/
+notebooks/confirmatory
