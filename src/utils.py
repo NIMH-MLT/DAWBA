@@ -1,6 +1,27 @@
 # utils.py
-
+import joblib
 import pandas as pd
+from pathlib import Path
+
+
+def get_test_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
+    """
+    Helper returning path to test df given model configuration
+    """
+    if desc_seg_type not in ["shot_zero", "shot_few"]:
+        raise ValueError(
+            f"Unrecognized desc_seg_type: {desc_seg_type}, must be one of ['shot_zero', 'shot_few']"
+        )
+    # remove -
+    agg_type_clean = agg_type.split("-")[0]
+    return (
+        Path(df_dir)
+        / llm_model
+        / f"temp_{temp}"
+        / desc_seg_type
+        / agg_type_clean
+        / f"{impact_type}.parquet"
+    )
 
 
 def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
@@ -11,7 +32,7 @@ def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
         # remove -
         agg_type_clean = agg_type.split("-")[0]
         return (
-            df_dir
+            Path(df_dir)
             / "final_cleaned"
             / llm_model
             / f"temp_{temp}"
@@ -27,7 +48,11 @@ def get_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
     else:
         raise ValueError(f"Unreccognized agg type: {agg_type}")
     return (
-        df_dir / intermediate_dir / llm_model / desc_seg_type / f"{impact_type}.parquet"
+        Path(df_dir)
+        / intermediate_dir
+        / llm_model
+        / desc_seg_type
+        / f"{impact_type}.parquet"
     )
 
 
@@ -83,8 +108,8 @@ def get_perm_seed(perm_dir):
 
 
 def export_data(data_to_export, export_path, remove_existing=False):
+    export_path = Path(export_path)
     if export_path.exists():
-
         if remove_existing:
             print(f"REMOVING file at path: {export_path}")
             export_path.unlink()
@@ -101,6 +126,8 @@ def export_data(data_to_export, export_path, remove_existing=False):
         data_to_export.to_csv(export_path)
     elif export_path.suffix == ".tsv":
         data_to_export.to_csv(export_path, sep="\t")
+    elif export_path.suffix == ".joblib":
+        joblib.dump(data_to_export, export_path)
     else:
         raise ValueError(f"Unrecognized export type: {export_path.suffix}")
 
@@ -544,3 +571,93 @@ ADVANCED_EXTRACTION_OUTCOMES = [
     "S79",
     "S80",
 ]
+
+
+BEST_PARAM_DICT = {
+    "SQT": {
+        "parent": {
+            "agg_type": "scale-new",
+            "llm_model": "Qwen3.6-27B",
+            "desc_seg_type": "shot_zero",
+            "alpha2": 15.0,
+            "alpha3": 75.0,
+            "temp": 0.0,
+            "num_layers": 3,
+            "two_layer_base": None,
+        },
+        "self": {
+            "agg_type": "scale-new",
+            "llm_model": "gemini-2.5-pro",
+            "desc_seg_type": "shot_few",
+            "alpha2": 50.0,
+            "alpha3": 15.0,
+            "temp": 0.4,
+            "num_layers": 3,
+            "two_layer_base": None,
+        },
+    },
+    "ST": {
+        "parent": {
+            "agg_type": "scale-new",
+            "llm_model": "Llama-3.3-70B-Instruct",
+            "desc_seg_type": "shot_few",
+            "alpha2": None,
+            "alpha3": 15.0,
+            "temp": 0.0,
+            "num_layers": 2,
+            "two_layer_base": "S",
+        },
+        "self": {
+            "agg_type": "scale-new",
+            "llm_model": "gemini-2.5-pro",
+            "desc_seg_type": "shot_few",
+            "alpha2": None,
+            "alpha3": 25.0,
+            "temp": 0.4,
+            "num_layers": 2,
+            "two_layer_base": "S",
+        },
+    },
+    "QT": {
+        "parent": {
+            "agg_type": "scale-new",
+            "llm_model": "Qwen3.6-27B",
+            "desc_seg_type": "shot_zero",
+            "alpha2": 5.0,
+            "alpha3": 50.0,
+            "temp": 0.0,
+            "num_layers": 2,
+            "two_layer_base": "Q",
+        },
+        "self": {
+            "agg_type": "scale-new",
+            "llm_model": "gemini-2.5-pro",
+            "desc_seg_type": "shot_few",
+            "alpha2": 15.0,
+            "alpha3": 5.0,
+            "temp": 0.4,
+            "num_layers": 2,
+            "two_layer_base": "Q",
+        },
+    },
+    "T": {
+        "parent": {
+            "agg_type": "scale-new",
+            "llm_model": "Llama-3.3-70B-Instruct",
+            "desc_seg_type": "shot_few",
+            "alpha2": None,
+            "alpha3": 5.0,
+            "temp": 1.0,
+            "num_layers": 1,
+        },
+        "self": {
+            "agg_type": "scale-new",
+            "llm_model": "gemini-2.5-pro",
+            "desc_seg_type": "shot_few",
+            "alpha2": None,
+            "alpha3": 5.0,
+            "temp": 0.4,
+            "num_layers": 1,
+        },
+    },
+}
