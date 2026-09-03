@@ -122,7 +122,7 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
 
     def shuffle_vals(self, X, col_to_shuffle_np, perm_dir):
         """
-        No longer used but keeping for legacy purposes
+        Used for hypothesis 1A/1b to shuffle TRAINING DATA
         """
         ## Get permutation seed
         perm_seed = get_perm_seed(perm_dir=perm_dir)

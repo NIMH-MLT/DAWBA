@@ -50,8 +50,6 @@ def ensure_dfs_match(loop_dir_imp, loop_dir_shot, impact_type):
 
 def create_perms(perm_seed, df_to_permute, group_col="eligible_group"):
     """
-    **NO longer used but keeping for legacy purposes**
-
     Permutes DAWBA_ID within `group_col` for df_to_permute
 
     Params
