@@ -244,7 +244,7 @@ def get_saliency_map(config_dict, model, df, coef_df):
     # plot
     plot_heatmap(
         summary.T,
-        title="Summary of saliency",
+        title=f"Summary of saliency- {impact_type.upper()}",
         vmin=-0.5,
         vmax=0.5,
         xlabel="Summary type",

@@ -18,6 +18,49 @@ import numpy as np
 from sklearn.metrics import r2_score
 
 
+def get_confirm_lmg(
+    perm_dir, X_train, y_train, X_test, y_test, model_config_dict, start_perm, end_perm
+):
+    """
+    Only for confirmatory analysis
+    """
+    df_list = []
+    for repeat, perm_dir in enumerate(perm_dir.iterdir()):
+        perm_name = perm_dir.name
+        if perm_name == "baseline":
+            continue
+        # Set starting and end perm numbers to control where we are permuting
+        perm_num = int(perm_name.split("_")[1].strip(""))
+        if (perm_num < start_perm) or (perm_num >= end_perm):
+            continue
+        perm_seed = get_perm_seed(perm_dir=perm_dir)
+        lmg_df = get_perm_feat_imp(
+            X_train=X_train,
+            y_train=y_train,
+            X_test=X_test,
+            y_test=y_test,
+            model_config_dict=model_config_dict,
+            random_state=perm_seed,
+        )
+        lmg_df = lmg_df.rename(
+            columns={
+                "original": f"original_{repeat}",
+                "reversed": f"reversed_{repeat}",
+            }
+        )
+        df_list.append(lmg_df)
+    combined_df = reduce(lambda left, right: left.join(right, how="outer"), df_list)
+    final_df = pd.DataFrame(
+        {
+            # avg for each outcome across all perms
+            "avg_increase": combined_df.mean(axis=1).round(4),
+            # stdev for each outcome across all perms
+            "std_increase": combined_df.std(axis=1).round(4),
+        }
+    )
+    return final_df
+
+
 def single_train_test_lmg(config, n_repeats, df, starting_seed, scale=False):
     #### PREP DATA  ####
     # Get X/y train/test sets
