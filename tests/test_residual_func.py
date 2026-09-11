@@ -21,8 +21,6 @@ QUEST = {
     "parent": ["p_dep_q1", "p_dep_q2", "p_dep_q3"],
 }
 
-# TODO: Test shuffling
-
 
 ######## Fixtures ########
 @pytest.fixture(autouse=True)

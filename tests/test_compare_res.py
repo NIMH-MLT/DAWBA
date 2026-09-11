@@ -461,9 +461,6 @@ class TestGetTopModels:
             get_top_models(mixed, PARAMS, num_layers=4)
 
     def test_missing_one_layer_rows_fail_opaquely(self, make_r2_df):
-        # TODO(bug C): get_layer1 returns None when no 1-layer configs exist, and
-        # get_top_models calls .sort_values on it immediately -- so an incomplete
-        # aggregate surfaces as AttributeError on NoneType.
         r2_df = make_r2_df(
             [
                 dict(

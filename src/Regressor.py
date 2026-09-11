@@ -10,7 +10,6 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import LinearRegression, Ridge
 
 
-# TODO: Write test for export/import of model
 class BaseRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
@@ -130,13 +129,19 @@ class BaseRegressor(BaseEstimator, RegressorMixin):
         sort_idx = np.argsort(X["DAWBA_ID"].values)
         X_sorted = X.iloc[sort_idx].reset_index(drop=True)
         col_sorted = col_to_shuffle_np[sort_idx]
+
         ### Shuffle DAWBA_ID col
-        self.perm_ids = create_perms(perm_seed=perm_seed, df_to_permute=X_sorted)
-        # Attatch og DAWBA IDs to col_to_shuffle
+        perm_ids_sorted = create_perms(perm_seed=perm_seed, df_to_permute=X_sorted)
+        # Attach og DAWBA IDs to col_to_shuffle
         df_w_ids = pd.DataFrame(col_sorted, index=X_sorted["DAWBA_ID"].values)
         # Reindex by permuted IDs
-        shuffled = df_w_ids.reindex(self.perm_ids)
-        return shuffled.to_numpy()
+        shuffled = df_w_ids.reindex(perm_ids_sorted).to_numpy()
+        # Undo the canonical sort so rows realign with X / y as the caller passed them
+        # WITHOUT UNSORT: X still gets stratified shuffled, but then gets assigned to Y
+        # in unpredictable order (bc we sort X here, but not Y)
+        unsort_idx = np.argsort(sort_idx)
+        self.perm_ids = np.asarray(perm_ids_sorted)[unsort_idx]
+        return shuffled[unsort_idx]
 
     def predict(self, X):
         """

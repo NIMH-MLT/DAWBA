@@ -1,14 +1,13 @@
 # test_regressor.py
 # Run w/ uv run pytest tests/test_regressor.py -v
 # Written in collaboration w/ Claude Opus 5
-#
-# NOTE: shuffle_vals / permutation-null coverage is deliberately absent -- to be
-# added separately. The two fit()-level shuffle tests below only guard the
-# default (shuffle=None) path and the argument validation.
+# NOTE: shuffle_vals / permutation-null coverage is in tests/test_perm.py
 
 import numpy as np
 import pandas as pd
 import pytest
+import pickle
+import joblib
 
 from sklearn.base import clone
 from sklearn.linear_model import LinearRegression, Ridge
@@ -18,6 +17,7 @@ from src.Regressor import BaseRegressor, IndependentRegressor, ResidualRegressor
 
 QUEST_COLS = ["q1", "q2", "q3"]
 PROB_OUTCOMES = ["t1", "t2", "t3", "t4"]
+CONFIGS = ["3", "S", "Q", "indep"]
 
 
 ######## Fixtures ########
@@ -571,4 +571,133 @@ class TestIndependentRegressor:
         m.fit(df, y)
         np.testing.assert_allclose(
             m.predict(df), m.predict_all(df)["pred_stage3_total"].to_numpy()
+        )
+
+
+######## Export / import (pickle round-trip) ########
+@pytest.fixture(params=["joblib", "pickle"])
+def round_trip(request, tmp_path):
+    """Writes to an actual file, so the test exercises the same path the pipeline
+    uses. joblib is what export_data actually calls; pickle is included because
+    joblib delegates to it and a __reduce__/__getstate__ change would show up in
+    both."""
+
+    def _round_trip(model, name="model"):
+        if request.param == "joblib":
+            path = tmp_path / f"{name}.joblib"
+            joblib.dump(model, path)
+            return joblib.load(path)
+        path = tmp_path / f"{name}.pkl"
+        with open(path, "wb") as f:
+            pickle.dump(model, f)
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+    return _round_trip
+
+
+@pytest.fixture
+def fitted(make_resid, make_independent, make_xy):
+    """One fitted model per layer configuration, keyed by a readable label."""
+
+    def _make(config, n=16, **overrides):
+        df, y = make_xy(n=n)
+        if config == "indep":
+            m = make_independent(num_layers=1, **overrides)
+        elif config == "3":
+            m = make_resid(num_layers=3, **overrides)
+        else:
+            m = make_resid(num_layers=2, two_layer_base=config, **overrides)
+        m.fit(df, y)
+        return m, df, y
+
+    return _make
+
+class TestModelExportImport:
+    @pytest.mark.parametrize("config", CONFIGS)
+    def test_predictions_survive_round_trip(self, fitted, round_trip, config):
+        """The reason a model is persisted at all: scoring a held-out fold later
+        must reproduce the in-session numbers exactly, not approximately."""
+        m, df, _ = fitted(config)
+        loaded = round_trip(m)
+        pd.testing.assert_frame_equal(loaded.predict_all(df), m.predict_all(df))
+
+    @pytest.mark.parametrize("config", CONFIGS)
+    def test_coef_df_survives_round_trip(self, fitted, round_trip, config):
+        """coef_df is the exported artifact the saliency maps are built from, and
+        it depends on _feat1/_feat2/_feat3 -- plain attributes that no sklearn
+        machinery would restore for us."""
+        m, _, _ = fitted(config)
+        loaded = round_trip(m)
+        pd.testing.assert_frame_equal(loaded.get_coef_df(), m.get_coef_df())
+
+    @pytest.mark.parametrize("config", CONFIGS)
+    def test_params_and_cached_train_state_preserved(self, fitted, round_trip, config):
+        m, _, _ = fitted(config)
+        loaded = round_trip(m)
+
+        assert loaded.get_params() == m.get_params()
+        np.testing.assert_array_equal(loaded.perm_ids, m.perm_ids)
+        for attr in ("pred1_train_", "pred2_train_", "pred3_train_"):
+            if hasattr(m, attr):
+                np.testing.assert_allclose(getattr(loaded, attr), getattr(m, attr))
+
+    def test_S_base_keeps_stage2_aliased_to_stage1(self, fitted, round_trip):
+        """For base="S", stage2_ IS stage1_. Pickle's memo preserves that shared
+        reference; any custom __getstate__ or a JSON/params-style export would
+        silently split it into two objects, and _reported_stages' duplicate
+        assertion would stop firing."""
+        m, _, _ = fitted("S")
+        loaded = round_trip(m)
+        assert loaded.stage2_ is loaded.stage1_
+
+    def test_unfitted_model_round_trips_and_still_fits(
+        self, make_resid, make_xy, round_trip
+    ):
+        """Config-only export: an unpickled estimator carries no fitted state but
+        must fit to the same numbers, which pins that every constructor arg is
+        actually stored on the instance."""
+        m = make_resid(num_layers=3)
+        loaded = round_trip(m)
+        assert not hasattr(loaded, "stage1_")
+
+        df, y = make_xy(n=16)
+        np.testing.assert_allclose(
+            loaded.fit(df, y).predict(df), m.fit(df, y).predict(df)
+        )
+
+    @pytest.mark.parametrize("config", CONFIGS)
+    def test_get_params_reconstructs_an_equivalent_estimator(
+        self, fitted, make_xy, config
+    ):
+        """prep_train_test_model builds these from a dict, so get_params has to
+        expose every argument -- a param missing from __init__'s signature (or
+        renamed on assignment) silently reverts to its default here."""
+        m, df, y = fitted(config)
+        rebuilt = type(m)(**m.get_params()).fit(df, y)
+        np.testing.assert_allclose(rebuilt.predict(df), m.predict(df))
+        pd.testing.assert_frame_equal(rebuilt.get_coef_df(), m.get_coef_df())
+
+    def test_clone_drops_fitted_state(self, fitted):
+        """clone is the sklearn-idiomatic config export; it must hand back a
+        blank estimator, so a cloned model can't accidentally score with the
+        previous fold's coefficients."""
+        m, _, _ = fitted("3")
+        fresh = clone(m)
+        assert fresh.get_params() == m.get_params()
+        assert not any(hasattr(fresh, a) for a in ("stage1_", "stage2_", "stage3_"))
+
+    @pytest.mark.parametrize("config", CONFIGS)
+    def test_export_carries_dawba_ids_but_no_feature_values(
+        self, fitted, round_trip, config
+    ):
+        """A saved model is not de-identified: perm_ids holds every training
+        DAWBA_ID. It should not also carry the questionnaire or text values, so
+        this pins what a model file exposes if it leaves the enclave."""
+        m, df, _ = fitted(config)
+        loaded = round_trip(m)
+
+        assert set(np.asarray(loaded.perm_ids).astype(int)) == set(df["DAWBA_ID"])
+        assert not any(
+            isinstance(v, (pd.DataFrame, pd.Series)) for v in vars(loaded).values()
         )

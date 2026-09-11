@@ -65,12 +65,15 @@ def create_perms(perm_seed, df_to_permute, group_col="eligible_group"):
     -------
     perm_labels: list[int] of shuffled DAWBA_IDS
     """
+    if df_to_permute[group_col].isna().sum() > 0:
+        raise ValueError(f">0 NAs in `{group_col}` column, unable to stratify.")
     ## Permute
     rng = np.random.default_rng(seed=perm_seed)
-    out = pd.Series(index=df_to_permute.index, dtype=df_to_permute["DAWBA_ID"].dtype)
-    for _, idx in df_to_permute.groupby(group_col, sort=True).groups.items():
-        out.loc[idx] = rng.permutation(df_to_permute.loc[idx, "DAWBA_ID"].to_numpy())
-    perm_labels = out.to_list()
+    perm_labels = (
+        df_to_permute.groupby(group_col, sort=True)["DAWBA_ID"]
+        .transform(lambda g: rng.permutation(g.to_numpy()))
+        .to_list()
+    )
     return perm_labels
 
 
