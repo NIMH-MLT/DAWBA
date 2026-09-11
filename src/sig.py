@@ -3,10 +3,12 @@ from src.utils import (
     col_config_sensitivity,
     get_test_df_path,
     get_df_path,
+    get_perm_seed,
 )
 from src.residual_func import get_X_y
 from src.Regressor import ResidualRegressor, IndependentRegressor
 import pandas as pd
+import numpy as np
 from sklearn.metrics import r2_score
 
 
@@ -84,7 +86,7 @@ def get_baseline_reduced(residual_setup, y_true, pred_df):
     return r2_baseline
 
 
-def get_p(df_sub):
+def get_p(df_sub, add_1_flag=False):
     """
     **Hypothesis 1**
 
@@ -93,5 +95,73 @@ def get_p(df_sub):
     col_max = df_sub.iloc[0].idxmax()
     observed = df_sub.iloc[0].max()
     max_list = df_sub.max(axis=1)
-    p_val = (max_list >= observed).sum() / (len(max_list) + 1)
+    numerator = max_list >= observed.sum()
+    denominator = len(max_list)
+    if add_1_flag:
+        numerator += 1
+        denominator += 1
+    p_val = numerator / denominator
     return p_val, col_max
+
+
+def get_hyp1_null(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    model,
+    all_perm_dir,
+    reduced_r2_no_shuffle,
+    start_perm,
+    end_perm,
+):
+    ## RUN THROUGH PERMS
+    diff_list = []
+    for perm_dir in all_perm_dir.iterdir():
+        perm_name = perm_dir.name
+        if perm_name == "baseline":
+            continue
+        # Set starting and end perm numbers to control where we are permuting
+        perm_num = int(perm_name.split("_")[1].strip(""))
+        if (perm_num < start_perm) or (perm_num >= end_perm):
+            continue
+        # Get null diff
+        model.fit(X_train, y_train, shuffle="text", perm_dir=perm_dir)
+        full_preds_shuffled = model.predict(X_test)
+        full_r2_shuffle = r2_score(y_true=y_test, y_pred=full_preds_shuffled)
+        shuffled_r2_diff = full_r2_shuffle - reduced_r2_no_shuffle
+        # Add to null distribution
+        diff_list.append(shuffled_r2_diff)
+        # TODO: Export perm iteration results to perm folder?
+        return diff_list
+
+
+def get_hyp2_null(
+    y_pred_SQ,
+    y_pred_ST,
+    y_true,
+    all_perm_dir,
+    start_perm,
+    end_perm,
+):
+    diff_list = []
+    for perm_dir in all_perm_dir.iterdir():
+        perm_name = perm_dir.name
+        if perm_name == "baseline":
+            continue
+        # Set starting and end perm numbers to control where we are permuting
+        perm_num = int(perm_name.split("_")[1].strip(""))
+        if (perm_num < start_perm) or (perm_num >= end_perm):
+            continue
+        perm_seed = get_perm_seed(perm_dir=perm_dir)
+        rng = np.random.RandomState(perm_seed)
+        mask = rng.rand(len(y_true)) < 0.5
+        perm_SQ = np.where(mask, y_pred_SQ, y_pred_ST)
+        perm_ST = np.where(mask, y_pred_ST, y_pred_SQ)
+
+        diff_list.append(
+            r2_score(y_true=y_true, y_pred=perm_ST)
+            - r2_score(y_true=y_true, y_pred=perm_SQ)
+        )
+        # TODO: Export perm iteration results to perm folder?
+    return diff_list
