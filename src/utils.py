@@ -4,6 +4,23 @@ import pandas as pd
 from pathlib import Path
 
 
+def order_perm_dir(parent_perm_dir, start_perm, end_perm):
+    perm_dirs = []
+    for perm_dir in parent_perm_dir.iterdir():
+        if not perm_dir.is_dir() or perm_dir.name == "baseline":
+            continue
+        try:
+            perm_num = int(perm_dir.name.split("_")[1])
+        except (IndexError, ValueError):
+            print(f"Some error occured for dir: {perm_dir.name}, SKIPPING")
+            continue
+        if start_perm <= perm_num < end_perm:
+            perm_dirs.append((perm_num, perm_dir))
+
+    perm_dirs.sort(key=lambda t: t[0])
+    return perm_dirs
+
+
 def get_test_df_path(df_dir, llm_model, agg_type, desc_seg_type, impact_type, temp):
     """
     Helper returning path to test df given model configuration

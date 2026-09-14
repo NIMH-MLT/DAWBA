@@ -4,6 +4,7 @@ from src.utils import (
     get_test_df_path,
     get_df_path,
     get_perm_seed,
+    order_perm_dir,
 )
 from src.residual_func import get_X_y
 from src.Regressor import ResidualRegressor, IndependentRegressor
@@ -13,12 +14,21 @@ from sklearn.metrics import r2_score
 
 
 def format_p_val(p_value):
+    """
+    Format p-value into a string
+
+    NOTE That p-val w/ 3 decimal points signifies significance, whereas
+    p-val w/ 2 decimal points signifies the opposite. In this way, a sig p-val
+    p-val rounding to 0.05 rounded to 0.05 (0.0496 --> "0.050") is represented
+    differently than a non-sig (0.0502 --> "0.05")
+
+    """
     if p_value < 0.001:
         return "<0.001"
     elif p_value < 0.05:
-        return float(round(p_value, 3))
+        return f"{p_value:.3f}"
     else:
-        return float(round(p_value, 2))
+        return f"{p_value:.2f}"
 
 
 def prep_train_test_model(
@@ -95,7 +105,7 @@ def get_p(df_sub, add_1_flag=False):
     col_max = df_sub.iloc[0].idxmax()
     observed = df_sub.iloc[0].max()
     max_list = df_sub.max(axis=1)
-    numerator = max_list >= observed.sum()
+    numerator = (max_list >= observed).sum()
     denominator = len(max_list)
     if add_1_flag:
         numerator += 1
@@ -117,14 +127,11 @@ def get_hyp1_null(
 ):
     ## RUN THROUGH PERMS
     diff_list = []
-    for perm_dir in all_perm_dir.iterdir():
-        perm_name = perm_dir.name
-        if perm_name == "baseline":
-            continue
-        # Set starting and end perm numbers to control where we are permuting
-        perm_num = int(perm_name.split("_")[1].strip(""))
-        if (perm_num < start_perm) or (perm_num >= end_perm):
-            continue
+    # Order perm_dir, just to have stable ordering of null dist
+    ordered_perm_dir = order_perm_dir(
+        parent_perm_dir=all_perm_dir, start_perm=start_perm, end_perm=end_perm
+    )
+    for perm_num, perm_dir in ordered_perm_dir:
         # Get null diff
         model.fit(X_train, y_train, shuffle="text", perm_dir=perm_dir)
         full_preds_shuffled = model.predict(X_test)
@@ -132,8 +139,8 @@ def get_hyp1_null(
         shuffled_r2_diff = full_r2_shuffle - reduced_r2_no_shuffle
         # Add to null distribution
         diff_list.append(shuffled_r2_diff)
-        # TODO: Export perm iteration results to perm folder?
-        return diff_list
+    # TODO: Export perm iteration results to perm folder?
+    return diff_list
 
 
 def get_hyp2_null(
@@ -144,15 +151,15 @@ def get_hyp2_null(
     start_perm,
     end_perm,
 ):
+    """
+    y_pred_SQ, y_pred_ST, and y_true are assumed to be in the same row order
+    """
     diff_list = []
-    for perm_dir in all_perm_dir.iterdir():
-        perm_name = perm_dir.name
-        if perm_name == "baseline":
-            continue
-        # Set starting and end perm numbers to control where we are permuting
-        perm_num = int(perm_name.split("_")[1].strip(""))
-        if (perm_num < start_perm) or (perm_num >= end_perm):
-            continue
+    # Order perm_dir, just to have stable ordering of null dist
+    ordered_perm_dir = order_perm_dir(
+        parent_perm_dir=all_perm_dir, start_perm=start_perm, end_perm=end_perm
+    )
+    for perm_num, perm_dir in ordered_perm_dir:
         perm_seed = get_perm_seed(perm_dir=perm_dir)
         rng = np.random.RandomState(perm_seed)
         mask = rng.rand(len(y_true)) < 0.5
@@ -163,5 +170,5 @@ def get_hyp2_null(
             r2_score(y_true=y_true, y_pred=perm_ST)
             - r2_score(y_true=y_true, y_pred=perm_SQ)
         )
-        # TODO: Export perm iteration results to perm folder?
+    # TODO: Export perm iteration results to perm folder?
     return diff_list

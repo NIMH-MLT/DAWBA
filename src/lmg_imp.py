@@ -1,8 +1,4 @@
-from src.utils import (
-    get_prob_col_outcomes,
-    get_perm_seed,
-    expand_text,
-)
+from src.utils import get_prob_col_outcomes, get_perm_seed, expand_text, order_perm_dir
 from src.residual_preds import add_split_col
 from src.residual_func import prep_train_test
 from src.Regressor import ResidualRegressor
@@ -19,20 +15,26 @@ from sklearn.metrics import r2_score
 
 
 def get_confirm_lmg(
-    perm_dir, X_train, y_train, X_test, y_test, model_config_dict, start_perm, end_perm
+    parent_perm_dir,
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    model_config_dict,
+    start_perm,
+    end_perm,
 ):
     """
     Only for confirmatory analysis
     """
     df_list = []
-    for repeat, perm_dir in enumerate(perm_dir.iterdir()):
-        perm_name = perm_dir.name
-        if perm_name == "baseline":
-            continue
-        # Set starting and end perm numbers to control where we are permuting
-        perm_num = int(perm_name.split("_")[1].strip(""))
-        if (perm_num < start_perm) or (perm_num >= end_perm):
-            continue
+    # Order perm_dir, just to have stable ordering of null dist
+    ordered_perm_dir = order_perm_dir(
+        parent_perm_dir=parent_perm_dir, start_perm=start_perm, end_perm=end_perm
+    )
+    if len(ordered_perm_dir) == 0:
+        raise ValueError("Passed parent_perm_dir contains no valid sub-directories!")
+    for perm_num, perm_dir in ordered_perm_dir:
         perm_seed = get_perm_seed(perm_dir=perm_dir)
         lmg_df = get_perm_feat_imp(
             X_train=X_train,
@@ -44,8 +46,8 @@ def get_confirm_lmg(
         )
         lmg_df = lmg_df.rename(
             columns={
-                "original": f"original_{repeat}",
-                "reversed": f"reversed_{repeat}",
+                "original": f"original_{perm_num}",
+                "reversed": f"reversed_{perm_num}",
             }
         )
         df_list.append(lmg_df)

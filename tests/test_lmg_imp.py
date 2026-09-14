@@ -9,7 +9,12 @@ from sklearn.metrics import r2_score
 
 import src.lmg_imp as lmg_mod
 import src.Regressor as reg_mod
-from src.lmg_imp import agg_over_perms, get_perm_feat_imp, get_starting_r2
+from src.lmg_imp import (
+    agg_over_perms,
+    get_perm_feat_imp,
+    get_starting_r2,
+    get_confirm_lmg,
+)
 
 QUEST_COLS = ["s_dep_q1", "s_dep_q2", "s_dep_q3"]
 PROB_OUTCOMES = ["t1", "t2", "t3", "t4"]
@@ -400,3 +405,223 @@ class TestAggOverPerms:
     def test_empty_list_raises(self):
         with pytest.raises(ValueError):
             agg_over_perms([])
+
+
+######## get_confirm_lmg ########
+@pytest.fixture
+def perm_tree(tmp_path):
+    """A permutation parent dir as write_dirs leaves it: perm_xxx folders each
+    holding seed.txt, plus the seedless baseline folder."""
+
+    def _make(nums=range(0, 6), start_seed=100, extras=("baseline",), files=()):
+        root = tmp_path / "perms"
+        root.mkdir()
+        for n in nums:
+            d = root / f"perm_{n:03d}"
+            d.mkdir()
+            (d / "seed.txt").write_text(str(start_seed + n))
+        for name in extras:
+            (root / name).mkdir()
+        for name in files:
+            (root / name).write_text("not a dir")
+        return root
+
+    return _make
+
+
+@pytest.fixture
+def fake_parent():
+    """Stands in for the perm parent so iterdir() order can be controlled --
+    on a real filesystem it is arbitrary and not reproducible across machines."""
+
+    class _Parent:
+        def __init__(self, dirs):
+            self._dirs = list(dirs)
+
+        def iterdir(self):
+            return iter(self._dirs)
+
+    return _Parent
+
+
+@pytest.fixture
+def stub_feat_imp(monkeypatch):
+    """Replaces the per-permutation LMG run with a recorder returning a frame
+    keyed by random_state, so the loop's selection, seeding and aggregation can
+    be checked without fitting hundreds of ridges."""
+
+    calls = []
+
+    def _install(
+        values_by_seed=None,
+        default=((0.1, 0.2, 0.3, 0.4), (0.4, 0.3, 0.2, 0.1)),
+    ):
+        """values_by_seed maps a seed to (original_values, reversed_values). The
+        two directions must differ, or a bug that drops one of them is invisible
+        in the pooled mean."""
+
+        def fake(
+            X_train,
+            y_train,
+            X_test,
+            y_test,
+            model_config_dict,
+            random_state,
+            repeat=None,
+            split_id=None,
+        ):
+            calls.append(random_state)
+            og, rev = (values_by_seed or {}).get(random_state, default)
+            return pd.DataFrame(
+                {"original": list(og), "reversed": list(rev)},
+                index=pd.Index(sorted(PROB_OUTCOMES), name="outcome"),
+            )
+
+        monkeypatch.setattr(lmg_mod, "get_perm_feat_imp", fake)
+        return calls
+
+    return _install
+
+
+class TestGetConfirmLmg:
+    def test_runs_only_the_perms_in_range(self, perm_tree, stub_feat_imp, config):
+        """start/end carve the swarm into jobs; running outside the window would
+        duplicate work another job already did."""
+        root = perm_tree(nums=range(0, 8), start_seed=100)
+        calls = stub_feat_imp()
+        get_confirm_lmg(root, None, None, None, None, config, start_perm=2, end_perm=5)
+        assert sorted(calls) == [102, 103, 104]
+
+    def test_seed_is_read_per_perm_dir_not_derived_from_position(
+        self, perm_tree, stub_feat_imp, config
+    ):
+        """random_state must come from that permutation's seed.txt -- the same
+        seed the DAWBA_ID shuffle used -- not from the loop counter."""
+        root = perm_tree(nums=[3, 4], start_seed=500)
+        calls = stub_feat_imp()
+        get_confirm_lmg(root, None, None, None, None, config, start_perm=0, end_perm=99)
+        assert sorted(calls) == [503, 504]
+
+    def test_baseline_dir_skipped(self, perm_tree, stub_feat_imp, config):
+        """baseline has no seed.txt, so reaching it at all would raise."""
+        root = perm_tree(nums=range(0, 3), start_seed=100)
+        calls = stub_feat_imp()
+        get_confirm_lmg(root, None, None, None, None, config, start_perm=0, end_perm=99)
+        assert len(calls) == 3
+
+    def test_output_shape_and_labels(self, perm_tree, stub_feat_imp, config):
+        root = perm_tree(nums=range(0, 3))
+        stub_feat_imp()
+        out = get_confirm_lmg(root, None, None, None, None, config, 0, 99)
+        assert list(out.columns) == ["avg_increase", "std_increase"]
+        assert list(out.index) == sorted(PROB_OUTCOMES)
+        assert out.index.name == "outcome"
+
+    def test_avg_pools_every_ordering_of_every_perm(
+        self, perm_tree, stub_feat_imp, config
+    ):
+        """Each permutation contributes an original AND a reversed column, so
+        avg_increase is the mean over 2 x n_perms estimates. The two directions
+        are given different values here: pooling only the originals would give
+        [0.20, 0.20, 0.20, 0.20] and pass a weaker version of this test."""
+        root = perm_tree(nums=[0, 1], start_seed=100)
+        stub_feat_imp(
+            values_by_seed={
+                100: ((0.10, 0.20, 0.30, 0.40), (0.50, 0.40, 0.30, 0.20)),
+                101: ((0.30, 0.20, 0.10, 0.00), (0.70, 0.60, 0.50, 0.40)),
+            }
+        )
+        out = get_confirm_lmg(root, None, None, None, None, config, 0, 99)
+        np.testing.assert_allclose(out["avg_increase"], [0.4, 0.35, 0.3, 0.25])
+
+    def test_std_is_across_columns_with_ddof_one(
+        self, perm_tree, stub_feat_imp, config
+    ):
+        """pandas .std defaults to the sample estimator; pinned because a switch
+        to ddof=0 would shrink every reported spread."""
+        root = perm_tree(nums=[0, 1], start_seed=100)
+        stub_feat_imp(
+            values_by_seed={
+                100: ((0.10, 0.0, 0.0, 0.0), (0.30, 0.0, 0.0, 0.0)),
+                101: ((0.50, 0.0, 0.0, 0.0), (0.70, 0.0, 0.0, 0.0)),
+            }
+        )
+        out = get_confirm_lmg(root, None, None, None, None, config, 0, 99)
+        expected = pd.Series([0.1, 0.3, 0.5, 0.7]).std()
+        assert out.loc["t1", "std_increase"] == pytest.approx(round(expected, 4))
+        assert (out.loc["t2", "std_increase"] == np.zeros(4)).all()
+        assert (out.loc["t3", "std_increase"] == np.zeros(4)).all()
+        assert (out.loc["t4", "std_increase"] == np.zeros(4)).all()
+
+    def test_stray_file_in_perm_parent_is_skipped(
+        self, perm_tree, stub_feat_imp, config
+    ):
+        """A loose file (results.parquet, .DS_Store) next to the perm dirs must
+        not take down a confirmatory run -- order_perm_dir in utils.py already
+        handles this with is_dir() plus a try/except."""
+        root = perm_tree(nums=range(0, 3), files=("results.parquet",))
+        calls = stub_feat_imp()
+        get_confirm_lmg(root, None, None, None, None, config, 0, 99)
+        assert len(calls) == 3
+
+    def test_empty_selection_raises_clearly(self, perm_tree, stub_feat_imp, config):
+        """No perms in range means reduce() gets an empty list. It should say so,
+        not fail inside functools with 'reduce() of empty iterable'."""
+        root = perm_tree(nums=range(0, 3))
+        stub_feat_imp()
+        with pytest.raises(ValueError):
+            get_confirm_lmg(root, None, None, None, None, config, 50, 60)
+
+    ## Integration -- real LMG runs, no stub ##
+    def test_allocation_sums_to_the_text_stage_increment(self, perm_tree, config, xy):
+        """LMG's defining property, end to end: averaged over permutations the
+        per-outcome increases still sum to the full model's gain over the SQ
+        baseline, so they remain readable as shares of that gain."""
+        X, y = xy(n=30)
+        root = perm_tree(nums=range(0, 3), start_seed=100)
+        out = get_confirm_lmg(root, X, y, X, y, config, 0, 3)
+
+        r2_sq = get_starting_r2(config, X, y, X, y)
+        full = reg_mod.ResidualRegressor(
+            **config, outcome_sub_list=list(PROB_OUTCOMES), two_layer_base=None
+        )
+        full.fit(X, y)
+        r2_full = r2_score(y, full.predict(X))
+        assert out["avg_increase"].sum() == pytest.approx(r2_full - r2_sq, abs=1e-3)
+
+    def test_deterministic_across_runs(self, perm_tree, config, xy):
+        """Every draw is seeded from seed.txt, so a repeat run of the same window
+        must reproduce the confirmatory table exactly."""
+        X, y = xy(n=24)
+        root = perm_tree(nums=range(0, 2), start_seed=100)
+        pd.testing.assert_frame_equal(
+            get_confirm_lmg(root, X, y, X, y, config, 0, 2),
+            get_confirm_lmg(root, X, y, X, y, config, 0, 2),
+        )
+
+    def test_matches_a_direct_call_for_a_single_perm(self, perm_tree, config, xy):
+        """One permutation in range should reduce to get_perm_feat_imp at that
+        perm's seed -- pins that no extra averaging or rescaling happens."""
+        X, y = xy(n=24)
+        root = perm_tree(nums=[2], start_seed=100)
+        out = get_confirm_lmg(root, X, y, X, y, config, 2, 3)
+        direct = get_perm_feat_imp(
+            X_train=X,
+            y_train=y,
+            X_test=X,
+            y_test=y,
+            model_config_dict=config,
+            random_state=102,
+        )
+        np.testing.assert_allclose(
+            out["avg_increase"], direct.mean(axis=1).round(4), atol=1e-4
+        )
+
+    @pytest.mark.parametrize("bad_key", ["two_layer_base", "outcome_sub_list"])
+    def test_hardcoded_keys_rejected(self, perm_tree, config, xy, bad_key):
+        """05_feat_cont strips these before calling; a config that kept them must
+        fail rather than collide with the arguments lmg_imp sets itself."""
+        X, y = xy(n=20)
+        root = perm_tree(nums=[0])
+        with pytest.raises(ValueError, match="must not be in model_config_dict"):
+            get_confirm_lmg(root, X, y, X, y, {**config, bad_key: None}, 0, 1)
