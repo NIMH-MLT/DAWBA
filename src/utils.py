@@ -4,6 +4,26 @@ import pandas as pd
 from pathlib import Path
 
 
+def format_config(config):
+    """
+    Returns combined format of alpha values that match with format in raw prediction tables.
+    If one of alpha2 or alpha3 are None, only return the other as a string.
+    Assumes 'alpha2'. 'alpha3' in config.keys()
+    """
+    alpha_2 = config["alpha2"]
+    alpha_3 = config["alpha3"]
+    if alpha_2 == None:
+        alpha_combined = str(alpha_3)
+    elif alpha_3 == None:
+        alpha_combined = str(alpha_2)
+    else:
+        alpha_combined = f"{alpha_2}_{alpha_3}"
+    config["alpha"] = alpha_combined
+    new_config = {k: v for k, v in config.items() if k not in ["alpha2", "alpha3"]}
+    new_config["desc_seg"] = new_config.pop("desc_seg_type")
+    return new_config
+
+
 def order_perm_dir(parent_perm_dir, start_perm, end_perm):
     perm_dirs = []
     for perm_dir in parent_perm_dir.iterdir():

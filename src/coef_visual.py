@@ -5,7 +5,14 @@ from matplotlib.colors import LinearSegmentedColormap
 
 
 def get_pivot(
-    df, agg_type, llm_model, desc_seg, alpha, num_layers, temp, two_layer_base
+    df,
+    agg_type,
+    llm_model,
+    desc_seg,
+    alpha,
+    num_layers,
+    temp,
+    two_layer_base,
 ):
     df = df.fillna("None")
     df["repeat_split_id"] = df["repeat"].astype(str) + "_" + df["split_id"].astype(str)
@@ -16,7 +23,7 @@ def get_pivot(
         & (df["alpha"] == alpha)
         & (df["num_layers"] == num_layers)
         & (df["temp"] == temp)
-        & (df["two_layer_base"] == two_layer_base)
+        & (df["two_layer_base"] == str(two_layer_base))
     ][["repeat_split_id", "stage", "feature", "coef"]]
     if len(sub_df) == 0:
         raise ValueError("No data matches the specified configuration.")

@@ -157,9 +157,7 @@ def get_X_y(df, config_dict, scale=False):
     return X, y
 
 
-def build_model(
-    config_dict, data_dir, temp, llm_model, two_layer_base=None, scale=False
-):
+def build_model(config_dict, data_dir, temp, llm_model, scale=False):
     """
     - Fit a ResidualRegressor given some model configuration on **training data**
     - Returns trained model, learned feature coefs, and loaded train DF
@@ -178,7 +176,7 @@ def build_model(
     X_train, y_train = get_X_y(df=train_df, config_dict=config_dict, scale=scale)
 
     # Build + fit model
-    model = ResidualRegressor(**config_dict, two_layer_base=two_layer_base)
+    model = ResidualRegressor(**config_dict)
     model.fit(X_train, y_train, shuffle=None, perm_dir=None)
 
     # Process coef df
