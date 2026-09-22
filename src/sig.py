@@ -11,21 +11,17 @@ from src.Regressor import ResidualRegressor, IndependentRegressor
 import pandas as pd
 import numpy as np
 from sklearn.metrics import r2_score
+import matplotlib.pyplot as plt
 
 
 def format_p_val(p_value):
     """
     Format p-value into a string
 
-    NOTE That p-val w/ 3 decimal points signifies significance, whereas
-    p-val w/ 2 decimal points signifies the opposite. In this way, a sig p-val
-    p-val rounding to 0.05 rounded to 0.05 (0.0496 --> "0.050") is represented
-    differently than a non-sig (0.0502 --> "0.05")
-
     """
     if p_value < 0.001:
         return "<0.001"
-    elif p_value < 0.05:
+    elif p_value < 0.06:
         return f"{p_value:.3f}"
     else:
         return f"{p_value:.2f}"
@@ -96,7 +92,34 @@ def get_baseline_reduced(residual_setup, y_true, pred_df):
     return r2_baseline
 
 
-def get_p(df_sub, add_1_flag=False):
+def plot_null_observed(null_dist, observed, set_up, impact_type):
+    """
+    Plots observed statistic in context of null distribution
+    """
+    more_extreme_vals = (null_dist >= observed).sum()
+    plt.hist(null_dist, bins=100)
+    plt.title(
+        f"{impact_type.upper()}: More extreme for {set_up}: {more_extreme_vals}/{len(null_dist)}"
+    )
+    plt.axvline(x=observed, color="red", ls="--", lw=2)
+    plt.show()
+    plt.close()
+
+
+def get_raw_p(null_dist, observed, add_1_flag):
+    """
+    Helper function that calculates p-value given an observed value and null distribution
+    """
+    numerator = (null_dist >= observed).sum()
+    denominator = len(null_dist)
+    if add_1_flag:
+        numerator += 1
+        denominator += 1
+    p_val = numerator / denominator
+    return p_val
+
+
+def get_p(df_sub, impact_type, add_1_flag=False, plot_histo=False):
     """
     **Hypothesis 1**
 
@@ -105,12 +128,14 @@ def get_p(df_sub, add_1_flag=False):
     col_max = df_sub.iloc[0].idxmax()
     observed = df_sub.iloc[0].max()
     max_list = df_sub.max(axis=1)
-    numerator = (max_list >= observed).sum()
-    denominator = len(max_list)
-    if add_1_flag:
-        numerator += 1
-        denominator += 1
-    p_val = numerator / denominator
+    p_val = get_raw_p(null_dist=max_list, observed=observed, add_1_flag=add_1_flag)
+    if plot_histo:
+        plot_null_observed(
+            null_dist=max_list,
+            observed=observed,
+            set_up=col_max,
+            impact_type=impact_type,
+        )
     return p_val, col_max
 
 

@@ -29,7 +29,11 @@ def get_full_reduced_scores(
         random_state=seed,
     )
     if residual_setup == "T":
-        return {"single_score": {residual_setup: full_score}}
+        return {
+            "single_score": {
+                residual_setup: f"{full_score:.3f} ({full_ci_lo:.3f}, {full_ci_hi:.3f})"
+            }
+        }
     ## Get reduced score
     # Stage 2 for full-reduced SQT/SQ and QT/Q models-- stage 1 for ST/S models
     reduced_name = (

@@ -3,6 +3,7 @@ data/
 
 # Toy notebooks
 notebooks/old
+notebooks/anxiety
 notebooks/local_notebooks
 
 # Results
