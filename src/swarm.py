@@ -25,11 +25,20 @@ def run_perm_swarm(
     swarm_time="1:00:00",
     job_name="preds_perm",
 ):
-    for impact_swarm_path in cmd_dir.iterdir():
-        impact_name = impact_swarm_path.stem
-        log_dir = swarm_log_dir / impact_name
+    for swarm_path in cmd_dir.iterdir():
+        impact_setup = swarm_path.stem
+        log_dir = swarm_log_dir / impact_setup
         log_dir.mkdir(parents=True, exist_ok=True)
-        swarm_cmd = f"swarm --time={swarm_time} --gres=lscratch:{scratch_gb} -g {process_gb} -t {num_cpu} --logdir={log_dir}  --job-name={impact_name}_{job_name} --partition={partition} -b {n_batch} {impact_swarm_path}"
+        swarm_cmd = " ".join(f"""swarm 
+            --time={swarm_time} 
+            --gres=lscratch:{scratch_gb} 
+            -g {process_gb} -t {num_cpu} 
+            --logdir={log_dir}  
+            --job-name={impact_setup}_{job_name} 
+            --partition={partition} 
+            -b {n_batch} 
+            {swarm_path}
+        """.split())
         print(swarm_cmd)
         subprocess.run(swarm_cmd, shell=True)
 
