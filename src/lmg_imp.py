@@ -176,20 +176,17 @@ def agg_over_perms(all_dfs):
     return final_df
 
 
-def get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test):
+def get_starting_r2(
+    model_config_dict, X_train, y_train, X_test, y_test, two_layer_base
+):
     """
     Helper for get_perm_feat_imp(); trains a dummy model to extract r^2 from SQ-level predictions
     """
     # Ensure no two_layer_base bc hardcode as None
-    if (
-        "two_layer_base" in model_config_dict.keys()
-        or "outcome_sub_list" in model_config_dict.keys()
-    ):
-        raise ValueError(
-            "two_layer_base and outcome_sub_list must not be in model_config_dict"
-        )
+    if "outcome_sub_list" in model_config_dict.keys():
+        raise ValueError("outcome_sub_list must not be in model_config_dict")
 
-    prob_col, prob_outcomes = get_prob_col_outcomes(
+    _, prob_outcomes = get_prob_col_outcomes(
         agg_type=model_config_dict["agg_type"],
         desc_seg_type=model_config_dict["desc_seg_type"],
     )
@@ -197,7 +194,7 @@ def get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test):
         **model_config_dict,
         # only use one text outcome for speed bc only need SQ
         outcome_sub_list=[prob_outcomes[0]],
-        two_layer_base=None,
+        two_layer_base=two_layer_base,
     )
     model.fit(X_train, y_train)
     pred_df = model.predict_all(X_test)
@@ -286,18 +283,26 @@ def get_perm_feat_imp(
     avg incremental r^2 of each outcome over the n_samples permutations.
     """
     # Base and sublist are hard-coded, cant pass
-    if (
-        "two_layer_base" in model_config_dict.keys()
-        or "outcome_sub_list" in model_config_dict.keys()
-    ):
-        raise ValueError(
-            "two_layer_base and outcome_sub_list must not be in model_config_dict"
-        )
+    if "outcome_sub_list" in model_config_dict.keys():
+        raise ValueError("outcome_sub_list must not be in model_config_dict")
     _, outcome_list = get_prob_col_outcomes(
         agg_type=model_config_dict["agg_type"],
         desc_seg_type=model_config_dict["desc_seg_type"],
     )
 
+    two_layer_base = model_config_dict.get("two_layer_base", None)
+    if two_layer_base is not None:
+        if two_layer_base not in ["S", "Q"]:
+            raise ValueError("two_layer_base must be be one of ['S', 'Q']")
+        if model_config_dict["num_layers"] != 2:
+            raise ValueError("two_layer_base can only be used when num_layers is 2")
+    else:
+        if model_config_dict["num_layers"] == 2:
+            raise ValueError("two_layer_base must be specified when num_layers is 2")
+
+    model_config_dict_clean = {
+        k: v for k, v in model_config_dict.items() if k != "two_layer_base"
+    }
     rng = np.random.default_rng(random_state)
     og_perm = tuple(rng.permutation(outcome_list))
 
@@ -315,7 +320,9 @@ def get_perm_feat_imp(
     def run_perm(perm):
         contributions = {outcome: 0.0 for outcome in outcome_list}
         active = []
-        r2_start = get_starting_r2(model_config_dict, X_train, y_train, X_test, y_test)
+        r2_start = get_starting_r2(
+            model_config_dict_clean, X_train, y_train, X_test, y_test, two_layer_base
+        )
         r2_prev = r2_start
         tot_r2 = r2_start
 
@@ -323,9 +330,9 @@ def get_perm_feat_imp(
             active.append(outcome)
             # Fit new model
             new_model = ResidualRegressor(
-                **model_config_dict,
+                **model_config_dict_clean,
                 outcome_sub_list=active.copy(),
-                two_layer_base=None,
+                two_layer_base=two_layer_base,
             )
             new_model.fit(X_train, y_train)
             # Get new r2
