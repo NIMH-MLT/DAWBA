@@ -92,11 +92,14 @@ def get_baseline_reduced(residual_setup, y_true, pred_df):
     return r2_baseline
 
 
-def plot_null_observed(null_dist, observed, set_up, impact_type):
+def plot_null_observed(null_dist, observed, set_up, impact_type, geq=True):
     """
     Plots observed statistic in context of null distribution
     """
-    more_extreme_vals = (null_dist >= observed).sum()
+    if geq:
+        more_extreme_vals = (null_dist >= observed).sum()
+    else:
+        more_extreme_vals = (null_dist <= observed).sum()
     plt.hist(null_dist, bins=100)
     plt.title(
         f"{impact_type.upper()}: More extreme for {set_up}: {more_extreme_vals}/{len(null_dist)}"
@@ -106,11 +109,26 @@ def plot_null_observed(null_dist, observed, set_up, impact_type):
     plt.close()
 
 
-def get_raw_p(null_dist, observed, add_1_flag):
+def get_raw_p(null_dist, observed, add_1_flag, geq=True):
     """
     Helper function that calculates p-value given an observed value and null distribution
+
+    Parameters
+    ----------
+    null_dist: List[float]
+    observed: float
+    add_1_flag: bool
+        Whether to add 1 to the numerator/denominator for p-val calculation
+        If passing observed val with null_dist, make False
+    geq: bool
+        If True, one-sided using >= (maxT)
+        Otherwise, one-sided using <= (minP)
+
     """
-    numerator = (null_dist >= observed).sum()
+    if geq:
+        numerator = (null_dist >= observed).sum()
+    else:
+        numerator = (null_dist <= observed).sum()
     denominator = len(null_dist)
     if add_1_flag:
         numerator += 1
@@ -119,11 +137,11 @@ def get_raw_p(null_dist, observed, add_1_flag):
     return p_val
 
 
-def get_p(df_sub, impact_type, add_1_flag=False, plot_histo=False):
+def get_p_maxT(df_sub, impact_type, add_1_flag=False, plot_histo=False):
     """
     **Hypothesis 1**
 
-    Westfall-young
+    Westfall-young maxT
     """
     col_max = df_sub.iloc[0].idxmax()
     observed = df_sub.iloc[0].max()
@@ -137,6 +155,29 @@ def get_p(df_sub, impact_type, add_1_flag=False, plot_histo=False):
             impact_type=impact_type,
         )
     return p_val, col_max
+
+
+def get_p_minP(p_df, impact_type, add_1_flag=False, plot_histo=False):
+    """
+    **Hypothesis 1**
+
+    Westfall-young minP
+    """
+    col_min = p_df.iloc[0].idxmin()
+    observed = p_df.iloc[0].min()
+    min_list = p_df.min(axis=1)
+    p_val = get_raw_p(
+        null_dist=min_list, observed=observed, add_1_flag=add_1_flag, geq=False
+    )
+    if plot_histo:
+        plot_null_observed(
+            null_dist=min_list,
+            observed=observed,
+            set_up=col_min,
+            impact_type=impact_type,
+            geq=False,
+        )
+    return p_val, col_min
 
 
 def get_hyp1_null(
