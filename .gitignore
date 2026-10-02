@@ -20,4 +20,7 @@ logs/
 results_old/
 models/
 
-DAWBA_Antonio/
+llm_prompt_iter2/question_answer
+llm_prompt_iter2/80_Outcomes_Enhanced.V2.xlsx
+
+*.DS_Store*
