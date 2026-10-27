@@ -644,6 +644,16 @@ BEST_PARAM_DICT = {
             "num_layers": 2,
             "two_layer_base": "S",
         },
+        "parent-new": {
+            "agg_type": "scale-new",
+            "llm_model": "Qwen3.6-27B",
+            "desc_seg_type": "shot_zero",
+            "alpha2": None,
+            "alpha3": 50.0,
+            "temp": 0.0,
+            "num_layers": 2,
+            "two_layer_base": "S",
+        },
         "self": {
             "agg_type": "scale-new",
             "llm_model": "gemini-2.5-pro",

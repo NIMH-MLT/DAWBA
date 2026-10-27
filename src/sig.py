@@ -238,3 +238,60 @@ def get_hyp2_null(
         )
     # TODO: Export perm iteration results to perm folder?
     return diff_list
+
+
+################################################
+############ For confirmatory only ############
+################################################
+def format_col_name(col_name):
+    format_name = col_name.split("_")[0]
+    if "new" in col_name:
+        format_name += "-new"
+    return format_name
+
+
+def get_diff_list(
+    model,
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    residual_setup,
+    all_perm_dir,
+    start_perm,
+    end_perm,
+):
+    ## Get observed score
+    model.fit(X_train, y_train, shuffle=None, perm_dir=None)
+
+    test_pred_all = model.predict_all(X_test)
+    # Reduced score (one of SQ, S, Q)
+    reduced_r2_no_shuffle = get_baseline_reduced(
+        residual_setup=residual_setup,
+        y_true=y_test,
+        pred_df=test_pred_all,
+    )
+    # Full score (one of SQT, ST, QT)
+    full_r2_no_shuffle = r2_score(
+        y_true=y_test, y_pred=test_pred_all["pred_stage3_total"]
+    )
+    # Test statistic (observed delta)
+    observed_r2_diff = full_r2_no_shuffle - reduced_r2_no_shuffle
+
+    diff_list = get_hyp1_null(
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        y_test=y_test,
+        model=model,
+        all_perm_dir=all_perm_dir,
+        reduced_r2_no_shuffle=reduced_r2_no_shuffle,
+        start_perm=start_perm,
+        end_perm=end_perm,
+    )
+    return observed_r2_diff, diff_list
+
+
+################################################
+################################################
+################################################
