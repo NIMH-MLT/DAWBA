@@ -1,6 +1,7 @@
 # Capturing additional variance in impact of adolescent depression from free text in the Development and Well-Being Assessment (DAWBA)
 
 [![Preregistration](https://img.shields.io/badge/Preregistration-OSF-blue)](https://osf.io/fs6bg)
+[![Preprint](https://img.shields.io/badge/Preprint-medRxiv-B31B1B)](https://www.medrxiv.org/content/10.64898/2026.11.02.26367115)
 
 Code for the preregistered study _Capturing additional variance in impact of adolescent depression from free text: proof of concept and preliminary results_. `DAWBA_Explore_Description.pdf` contains a preliminary write-up detailing content in the preregistration.
 
